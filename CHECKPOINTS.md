@@ -26,7 +26,7 @@ Build the first distributable shape of `lrcmd` in this repository.
   - Add `config.example.json` using bundled `inctl`.
   - Add clear next-step output for Accessibility permission and manual LaunchAgent migration.
 
-- [ ] 4. Documentation and verification
+- [x] 4. Documentation and verification
   - Document install script usage, manual verification, uninstall notes, and the current no-LaunchAgent-registration boundary.
   - Verify `swift build -c release`.
   - Verify `inctl list`, `inctl current`, and basic `lrcmd` error behavior.

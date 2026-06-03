@@ -38,6 +38,40 @@ See [config.example.json](config.example.json) for the config shape.
 
 v0.0.1 does not generate a LaunchAgent plist and does not run `launchctl`. Any background launch setup is still manual.
 
+## Verification
+
+After installation, check the bundled input-source helper:
+
+```bash
+$HOME/Applications/lrcmd/bin/inctl list
+$HOME/Applications/lrcmd/bin/inctl current
+```
+
+To run `lrcmd` manually with the generated config:
+
+```bash
+$HOME/Applications/lrcmd/bin/lrcmd --config "$HOME/.config/lrcmd/config.json"
+```
+
+`lrcmd` requires Accessibility permission:
+
+```text
+System Settings > Privacy & Security > Accessibility
+```
+
+If you are currently using an existing `cmd-launcher` LaunchAgent, leave it in place until you intentionally migrate it.
+
+## Uninstall
+
+v0.0.1 does not install a LaunchAgent. To remove the files created by `install.sh`:
+
+```bash
+rm -rf "$HOME/Applications/lrcmd"
+rm -rf "$HOME/.config/lrcmd"
+```
+
+If you created any manual LaunchAgent later, stop and remove that separately.
+
 ## CLI usage
 
 Build with SwiftPM:
