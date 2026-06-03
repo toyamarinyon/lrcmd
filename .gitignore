@@ -3,3 +3,5 @@
 DerivedData/
 .DS_Store
 
+# Built distribution files
+dist/
