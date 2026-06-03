@@ -1,91 +1,49 @@
-# lrcmd Roadmap
+# enka Roadmap
 
-lrcmd is a small, inspectable macOS utility that maps left/right Command taps to input sources.  
-The current direction is to keep setup and service lifecycle predictable while staying respectful of macOS permission and privacy boundaries.
+`enka` is a small macOS input source switcher for left/right Command key single-taps.
 
-## Product principles
+The product is intentionally not a general command launcher. Configured taps point directly at input source IDs, and the daemon keeps the key-event hot path as short as possible.
 
-- **Small:** minimal binary surface and clear shell commands.
-- **Inspectable:** every setup action should be understandable from logs and status output.
-- **Reversible:** uninstall and reset paths should remove only owned artifacts.
-- **Respectful of macOS permissions:** use app identities and standard prompts; avoid undocumented bypasses.
+## Product Principles
 
-## Implemented
+- **Focused:** switch macOS input sources, avoid general launcher behavior.
+- **Fast:** resolve input sources at startup; select cached sources on Command release.
+- **Inspectable:** setup, status, and release scripts should show exactly what they touch.
+- **Reversible:** uninstall and reset paths should remove only owned `enka` artifacts.
+- **Respectful of macOS permissions:** use an app bundle identity and standard Accessibility prompts.
 
-- Installer and onboarding defaults
-  - Hosted installer script exists and is ready for the hosted install flow; endpoint deployment is still pending.
-  - Install flow delivers `Lrcmd.app`, `lrcmd`, and `inctl` under the user install layout.
-  - Setup onboarding path is in place after install.
+## Current Direction
 
-- Accessibility flow via `Lrcmd.app`
-  - `Lrcmd.app` is used as the macOS accessibility target instead of the CLI binary.
-  - Setup opens `Lrcmd.app` and requests permission for that app identity.
-  - Permission messaging now points users to app-centric approval in System Settings.
+- Rename the tool from `lrcmd` to `enka`.
+- Ship one CLI binary, `enka`, plus `Enka.app` for Accessibility identity.
+- Remove the separate `inctl` helper binary by folding input source operations into `enka sources/current/select`.
+- Replace command-based config with first-class input source config:
 
-- LaunchAgent lifecycle
-  - Setup can generate/update the LaunchAgent plist.
-  - Setup and `lrcmd restart` manage agent lifecycle; `lrcmd status` reports state.
-  - Restart path is wired for post-setup recovery and repeated onboarding.
+```json
+{
+  "leftTap": {
+    "source": "com.apple.keylayout.ABC"
+  },
+  "rightTap": {
+    "source": "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
+  }
+}
+```
 
-- Release and packaging
-  - Release archive packaging includes `Lrcmd.app`, `bin/lrcmd`, and `bin/inctl`.
-  - Release packages include release metadata and installation artifacts used by onboarding and restart flows.
-  - Dist output paths and packaging expectations have been aligned.
+## Owned Artifacts
 
-- Logging and operational visibility
-  - Setup logs explicit actions for what was written/started.
-  - Setup artifacts are written under `~/.config/lrcmd`; setup log output is written to `~/.local/state/lrcmd/setup.log`.
-  - Distribution now treats `dist/` as generated and ignored in git.
+- Install root: `~/Applications/enka`
+- CLI: `~/Applications/enka/bin/enka`
+- App bundle: `~/Applications/enka/Enka.app`
+- LaunchAgent: `~/Library/LaunchAgents/dev.ultrahope.enka.plist`
+- Config: `~/.config/enka/config.json`
+- State/log directory: `~/.local/state/enka`
+- Release archive: `enka-v<version>-<platform>.tar.gz`
 
-- Follow-up knowledge captured from incident handling
-  - Background Activity/Background mode can block auto-start after reboot; this must be captured as a diagnosed prerequisite in docs/flow.
+## Near-Term Backlog
 
-## Remaining / Next
-
-- Clarify diagnostic guidance for boot-time behavior:
-  - Document why `lrcmd` may not auto-run on reboot until background activity is enabled.
-  - Add explicit check steps in docs and status output to verify this condition.
-
-- Permission status accuracy
-  - Update `status` / `doctor` to check Accessibility for `Lrcmd.app` via LaunchServices, not CLI process identity.
-  - Ensure mismatch scenarios report "app not yet approved" instead of "agent/CLI issue."
-
-- Finish onboarding polish
-  - Make setup output consistently show:
-    - app path used for permission
-    - plist path
-    - service target and last start state
-  - Keep dry-run-like behavior for tests/dev flows where prompts or service writes should be avoided.
-
-- Maintain roadmap focus
-  - Keep this file as a short backlog, not a speculative long-range vision.
-  - Remove stale future work that is now implemented.
-
-## User-facing check list (current)
-
-- Install with hosted script
-- Run `lrcmd setup`
-- Open/approve `Lrcmd.app` for Accessibility
-- Verify with `lrcmd status` or `lrcmd doctor`
-- Use `lrcmd restart` if reboot/start behavior changes (especially around background activity)
-
-## Near-term backlog priority
-
-- High
-  - Background Activity requirement documentation.
-  - LaunchServices-based `status`/`doctor` permission check.
-  - Restart behavior and startup diagnostics when app is not enabled.
-
-- Medium
-  - Keep status output stable for debugging and support threads.
-  - Tighten release notes around `dist/` and reinstall behavior.
-
-- Low
-  - Minor onboarding wording refinements.
-  - Optional command examples for common recovery paths.
-
-## Tracking discipline
-
-- Keep scope updates in `PROJECT.md` only when behavior changes.
-- Remove old "to-do" entries once shipped.
-- Prefer small, reviewable slices over large spec additions.
+- Finish the `enka` breaking rename across Swift code, scripts, docs, and release verification.
+- Verify `enka sources/current/select` on a real macOS session.
+- Verify setup dry-run does not create config or LaunchAgent directories.
+- Verify release packaging contains only `bin/enka`, `Enka.app`, README, and optional LICENSE.
+- Document Background Activity behavior if reboot/startup issues reappear.

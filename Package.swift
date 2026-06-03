@@ -2,22 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "lrcmd",
+    name: "enka",
     platforms: [
         .macOS(.v13),
     ],
     products: [
-        .executable(name: "lrcmd", targets: ["Lrcmd"]),
-        .executable(name: "inctl", targets: ["Inctl"]),
+        .executable(name: "enka", targets: ["Enka"]),
     ],
     targets: [
         .executableTarget(
-            name: "Lrcmd",
-            path: "Sources/Lrcmd"
-        ),
-        .executableTarget(
-            name: "Inctl",
-            path: "Sources/Inctl"
+            name: "Enka",
+            path: "Sources/Enka"
         ),
     ]
 )

@@ -1,34 +1,24 @@
 @preconcurrency import ApplicationServices
+import Carbon
 import CoreGraphics
 import Foundation
 import Darwin
 
 struct Config: Decodable {
-    struct Command: Decodable {
-        let command: String
-        let arguments: [String]
-
-        private enum CodingKeys: String, CodingKey {
-            case command
-            case arguments
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            command = try container.decode(String.self, forKey: .command)
-            arguments = try container.decodeIfPresent([String].self, forKey: .arguments) ?? []
-        }
+    struct InputTap: Decodable {
+        let source: String
     }
 
-    let leftCommand: Command
-    let rightCommand: Command
+    let leftTap: InputTap
+    let rightTap: InputTap
 }
 
-enum LrcmdError: Error, CustomStringConvertible {
+enum EnkaError: Error, CustomStringConvertible {
     case invalidArguments
     case accessibilityPermissionRequired
     case configReadFailed(String, Error)
     case configDecodeFailed(String, Error)
+    case configMissingInputSource(String)
     case eventTapCreationFailed
     case runLoopSourceCreationFailed
 
@@ -42,6 +32,8 @@ enum LrcmdError: Error, CustomStringConvertible {
             return "Failed to read config at '\(path)': \(error.localizedDescription)"
         case let .configDecodeFailed(path, error):
             return "Invalid config at '\(path)': \(error.localizedDescription)"
+        case let .configMissingInputSource(sourceId):
+            return "Configuration input source not found: \(sourceId)"
         case .eventTapCreationFailed:
             return "Failed to create keyboard event tap. Check Accessibility permission."
         case .runLoopSourceCreationFailed:
@@ -67,6 +59,9 @@ final class LauncherState {
     private var leftState = KeyState()
     private var rightState = KeyState()
     var config: Config?
+    private var leftInputSource: TISInputSource?
+    private var rightInputSource: TISInputSource?
+    private var inputSourceCache: [String: TISInputSource] = [:]
 
     func handle(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -141,40 +136,81 @@ final class LauncherState {
                 leftState.isPressed = false
                 leftState.sawOtherKey = false
             }
-            guard leftState.isPressed, !leftState.sawOtherKey, let command = config?.leftCommand else {
+            guard leftState.isPressed, !leftState.sawOtherKey, let inputSource = leftInputSource else {
                 return
             }
-            launch(command)
+            _ = TISSelectInputSource(inputSource)
 
         case .right:
             defer {
                 rightState.isPressed = false
                 rightState.sawOtherKey = false
             }
-            guard rightState.isPressed, !rightState.sawOtherKey, let command = config?.rightCommand else {
+            guard rightState.isPressed, !rightState.sawOtherKey, let inputSource = rightInputSource else {
                 return
             }
-            launch(command)
+            _ = TISSelectInputSource(inputSource)
         }
     }
 
-    private func launch(_ command: Config.Command) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: command.command)
-        process.arguments = command.arguments
+    func preloadInputSources(for config: Config) throws {
+        try cacheAllInputSources()
+        self.leftInputSource = inputSource(for: config.leftTap.source)
+        self.rightInputSource = inputSource(for: config.rightTap.source)
 
-        do {
-            try process.run()
-        } catch {
-            writeStderr("lrcmd: failed to launch '\(command.command)': \(error.localizedDescription)\n")
+        if self.leftInputSource == nil {
+            throw EnkaError.configMissingInputSource(config.leftTap.source)
+        }
+        if self.rightInputSource == nil {
+            throw EnkaError.configMissingInputSource(config.rightTap.source)
         }
     }
+
+    private func inputSource(for id: String) -> TISInputSource? {
+        guard let source = inputSourceCache[id] else {
+            return nil
+        }
+        return source
+    }
+
+    private func cacheAllInputSources() throws {
+        inputSourceCache.removeAll()
+        let sourceList = TISCreateInputSourceList(nil, false).takeRetainedValue()
+        guard let sources = sourceList as? [TISInputSource] else {
+            throw EnkaError.configMissingInputSource("(all)")
+        }
+
+        for source in sources {
+            if let sourceId = stringProperty(source, key: kTISPropertyInputSourceID) {
+                inputSourceCache[sourceId] = source
+            }
+        }
+
+        if inputSourceCache.isEmpty {
+            throw EnkaError.configMissingInputSource("(all)")
+        }
+    }
+
+    private func stringProperty(_ source: TISInputSource, key: CFString) -> String? {
+        guard let rawValue = TISGetInputSourceProperty(source, key) else {
+            return nil
+        }
+
+        let unmanaged = Unmanaged<CFTypeRef>.fromOpaque(rawValue)
+        let value = unmanaged.takeUnretainedValue()
+        return value as? String
+    }
+
+    
 }
 
 func usage(progname: String) -> String {
     """
     Usage:
       \(progname) [run] [--config /path/to/config.json]
+      \(progname) sources
+      \(progname) current
+      \(progname) select <id>
       \(progname) status [--dry-run]
       \(progname) doctor
       \(progname) setup [--yes] [--replace] [--dry-run] [--no-open] [--no-start] [--wait-accessibility <seconds>]
@@ -188,8 +224,11 @@ func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data(message.utf8))
 }
 
-enum LrcmdCommand {
+enum EnkaCommand {
     case run(configPath: String)
+    case sources
+    case currentSource
+    case select(String)
     case status(dryRun: Bool)
     case doctor
     case accessibilityStatus(resultFile: String?)
@@ -218,27 +257,27 @@ func userHomeDirectory() -> String {
 }
 
 func defaultInstallRoot() -> String {
-    envOverride("LRCMD_INSTALL_ROOT") ?? userHomeDirectory().appending("/Applications/lrcmd")
+    envOverride("ENKA_INSTALL_ROOT") ?? userHomeDirectory().appending("/Applications/enka")
 }
 
 func defaultConfigDirectory() -> String {
-    envOverride("LRCMD_CONFIG_DIR") ?? userHomeDirectory().appending("/.config/lrcmd")
+    envOverride("ENKA_CONFIG_DIR") ?? userHomeDirectory().appending("/.config/enka")
 }
 
 func defaultLaunchAgentDirectory() -> String {
-    envOverride("LRCMD_LAUNCH_AGENT_DIR") ?? userHomeDirectory().appending("/Library/LaunchAgents")
+    envOverride("ENKA_LAUNCH_AGENT_DIR") ?? userHomeDirectory().appending("/Library/LaunchAgents")
 }
 
 func stateDirectoryPath() -> String {
-    userHomeDirectory().appending("/.local/state/lrcmd")
+    userHomeDirectory().appending("/.local/state/enka")
 }
 
 func standardOutputLogPath() -> String {
-    stateDirectoryPath().appending("/lrcmd.log")
+    stateDirectoryPath().appending("/enka.log")
 }
 
 func standardErrorLogPath() -> String {
-    stateDirectoryPath().appending("/lrcmd.err.log")
+    stateDirectoryPath().appending("/enka.err.log")
 }
 
 func setupLogPath() -> String {
@@ -271,11 +310,11 @@ func defaultConfigPath() -> String {
 }
 
 func installedAppPath() -> String {
-    defaultInstallRoot().appending("/Lrcmd.app")
+    defaultInstallRoot().appending("/Enka.app")
 }
 
 func installedAppExecutablePath() -> String {
-    installedAppPath().appending("/Contents/MacOS/Lrcmd")
+    installedAppPath().appending("/Contents/MacOS/Enka")
 }
 
 func installedAppInfoPlistPath() -> String {
@@ -283,19 +322,15 @@ func installedAppInfoPlistPath() -> String {
 }
 
 func installedBinaryPath() -> String {
-    defaultInstallRoot().appending("/bin/lrcmd")
-}
-
-func bundledInctlPath() -> String {
-    defaultInstallRoot().appending("/bin/inctl")
+    defaultInstallRoot().appending("/bin/enka")
 }
 
 func launchAgentPlistPath() -> String {
-    defaultLaunchAgentDirectory().appending("/dev.ultrahope.lrcmd.plist")
+    defaultLaunchAgentDirectory().appending("/dev.ultrahope.enka.plist")
 }
 
 func launchctlLabel() -> String {
-    "dev.ultrahope.lrcmd"
+    "dev.ultrahope.enka"
 }
 
 func launchctlDomain() -> String {
@@ -326,7 +361,7 @@ func launchAgentPlist(configPath: String) -> String {
     <plist version="1.0">
     <dict>
       <key>Label</key>
-      <string>\(escapeXML("dev.ultrahope.lrcmd"))</string>
+      <string>\(escapeXML("dev.ultrahope.enka"))</string>
       <key>ProgramArguments</key>
       <array>
         <string>\(escapeXML(programPath))</string>
@@ -357,6 +392,7 @@ func escapeJSON(_ value: String) -> String {
 }
 
 struct InputSource {
+    let source: TISInputSource
     let id: String
     let name: String
 }
@@ -365,62 +401,56 @@ func quotedPath(_ path: String) -> String {
     return "\"\(path)\""
 }
 
-func runInctlList(_ inctlPath: String) -> [InputSource]? {
-    let fm = FileManager.default
-    guard fm.fileExists(atPath: inctlPath) else {
+func inputSourceProperty(_ source: TISInputSource, key: CFString) -> String? {
+    guard let rawValue = TISGetInputSourceProperty(source, key) else {
         return nil
     }
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: inctlPath)
-    process.arguments = ["list"]
+    let unmanaged = Unmanaged<CFTypeRef>.fromOpaque(rawValue)
+    let value = unmanaged.takeUnretainedValue()
+    return value as? String
+}
 
-    let stdout = Pipe()
-    process.standardOutput = stdout
-    let stderr = Pipe()
-    process.standardError = stderr
+func availableInputSources() throws -> [InputSource] {
+    let sourceList = TISCreateInputSourceList(nil, false).takeRetainedValue()
+    guard let sources = sourceList as? [TISInputSource] else {
+        return []
+    }
 
+    return sources.compactMap { source in
+        guard
+            let id = inputSourceProperty(source, key: kTISPropertyInputSourceID),
+            let name = inputSourceProperty(source, key: kTISPropertyLocalizedName)
+        else {
+            return nil
+        }
+        return InputSource(source: source, id: id, name: name)
+    }
+}
+
+func currentInputSource() throws -> InputSource {
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
+        throw EnkaError.configDecodeFailed("<current>", NSError(domain: "Enka", code: 1))
+    }
+    guard
+        let id = inputSourceProperty(source, key: kTISPropertyInputSourceID),
+        let name = inputSourceProperty(source, key: kTISPropertyLocalizedName)
+    else {
+        throw EnkaError.configDecodeFailed("<current>", NSError(domain: "Enka", code: 2))
+    }
+    return InputSource(source: source, id: id, name: name)
+}
+
+func selectInputSource(_ id: String) -> Bool {
     do {
-        try process.run()
-        process.waitUntilExit()
+        let sources = try availableInputSources()
+        guard let target = sources.first(where: { $0.id == id }) else {
+            return false
+        }
+        return TISSelectInputSource(target.source) == noErr
     } catch {
-        writeStderr("warning: failed to run inctl list: \(error.localizedDescription)\n")
-        return nil
+        return false
     }
-
-    if process.terminationStatus != 0 {
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-        let stderrOutput = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !stderrOutput.isEmpty {
-            writeStderr("warning: inctl list failed: \(stderrOutput)\n")
-        } else {
-            writeStderr("warning: inctl list exited with status \(process.terminationStatus)\n")
-        }
-        return nil
-    }
-
-    let data = stdout.fileHandleForReading.readDataToEndOfFile()
-    guard let output = String(data: data, encoding: .utf8) else {
-        return nil
-    }
-
-    let lines = output
-        .split(separator: "\n", omittingEmptySubsequences: false)
-        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-
-    var sources: [InputSource] = []
-    for line in lines {
-        let parts = line.split(separator: "\t", maxSplits: 1)
-        guard parts.count == 2 else {
-            continue
-        }
-        let id = String(parts[0])
-        let name = String(parts[1])
-        sources.append(InputSource(id: id, name: name))
-    }
-
-    return sources
 }
 
 func inputSourceName(for id: String, in sources: [InputSource]) -> String {
@@ -512,16 +542,14 @@ func ensureDirectory(atPath path: String) throws {
     }
 }
 
-func configurationJSON(inctlPath: String, leftSourceId: String, rightSourceId: String) -> String {
+func configurationJSON(leftSourceId: String, rightSourceId: String) -> String {
     return """
     {
-      "leftCommand": {
-        "command": "\(escapeJSON(inctlPath))",
-        "arguments": ["select", "\(escapeJSON(leftSourceId))"]
+      "leftTap": {
+        "source": "\(escapeJSON(leftSourceId))"
       },
-      "rightCommand": {
-        "command": "\(escapeJSON(inctlPath))",
-        "arguments": ["select", "\(escapeJSON(rightSourceId))"]
+      "rightTap": {
+        "source": "\(escapeJSON(rightSourceId))"
       }
     }
     """
@@ -533,20 +561,18 @@ func printSetupSummary(
     leftSourceName: String,
     rightSourceName: String,
     configPath: String,
-    plistPath: String,
-    inctlPath: String
+    plistPath: String
 ) {
     print("Summary:")
-    print("  left Command:  \(leftSourceId)/\(leftSourceName)")
-    print("  right Command: \(rightSourceId)/\(rightSourceName)")
+    print("  left source:  \(leftSourceId)/\(leftSourceName)")
+    print("  right source: \(rightSourceId)/\(rightSourceName)")
     print("  config path:   \(configPath)")
     print("  plist path:    \(plistPath)")
     print("  app path:      \(installedAppPath())")
-    print("  lrcmd binary:  \(installedBinaryPath())")
-    print("  inctl binary:  \(inctlPath)")
+    print("  enka binary:  \(installedBinaryPath())")
 }
 
-func runOpenLrcmdApp(logToSetup: ((String) -> Void)? = nil) throws {
+func runOpenEnkaApp(logToSetup: ((String) -> Void)? = nil) throws {
     logToSetup?("\(setupLogPrefix()) [setup] open command start: /usr/bin/open \(installedAppPath())")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -569,7 +595,7 @@ func runAccessibilityStatusSubcommand(
     if FileManager.default.fileExists(atPath: appBundlePath) {
         let logPrefix = setupLogPrefix()
         let tempFile = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("lrcmd_accessibility_status_\(UUID().uuidString).txt")
+            .appendingPathComponent("enka_accessibility_status_\(UUID().uuidString).txt")
         defer {
             try? FileManager.default.removeItem(at: tempFile)
         }
@@ -733,7 +759,6 @@ func runSetup(
 ) {
     let configPath = defaultConfigPath()
     let plistPath = launchAgentPlistPath()
-    let inctlPath = bundledInctlPath()
     let configDir = defaultConfigDirectory()
     let plistDir = (plistPath as NSString).deletingLastPathComponent
     let stateDir = stateDirectoryPath()
@@ -757,15 +782,12 @@ func runSetup(
         )
     }
 
-    var availableSources: [InputSource]? = nil
-    if FileManager.default.fileExists(atPath: inctlPath) {
-        if let sources = runInctlList(inctlPath) {
-            availableSources = sources
-        } else {
-            print("warning: could not list input sources from \(quotedPath(inctlPath)); using defaults.")
-        }
-    } else {
-        print("warning: inctl binary not found at \(quotedPath(inctlPath)); using default source IDs.")
+    let availableSources: [InputSource]?
+    do {
+        availableSources = try availableInputSources()
+    } catch {
+        print("warning: could not list input sources: \(error.localizedDescription); using defaults.")
+        availableSources = nil
     }
 
     let preferredLeft = "com.apple.keylayout.ABC"
@@ -796,12 +818,12 @@ func runSetup(
         )
 
         let selectedLeftSource = chooseInputSource(
-            prompt: "Choose left Command input source [default \(leftDefault)]:",
+            prompt: "Choose left source [default \(leftDefault)]:",
             sources: sources,
             defaultIndex: leftDefault
         )
         let selectedRightSource = chooseInputSource(
-            prompt: "Choose right Command input source [default \(rightDefault)]:",
+            prompt: "Choose right source [default \(rightDefault)]:",
             sources: sources,
             defaultIndex: rightDefault
         )
@@ -821,8 +843,7 @@ func runSetup(
         leftSourceName: leftSourceName,
         rightSourceName: rightSourceName,
         configPath: configPath,
-        plistPath: plistPath,
-        inctlPath: inctlPath
+        plistPath: plistPath
     )
 
     let fm = FileManager.default
@@ -883,7 +904,7 @@ func runSetup(
                 try ensureDirectory(atPath: configDir)
                 try ensureDirectory(atPath: plistDir)
                 try ensureDirectory(atPath: stateDir)
-                try doWriteConfig(at: configPath, leftSourceId: leftSourceId, rightSourceId: rightSourceId, inctlPath: inctlPath)
+                try doWriteConfig(at: configPath, leftSourceId: leftSourceId, rightSourceId: rightSourceId)
             } catch {
                 writeStderr("error: failed to write config at \(configPath): \(error.localizedDescription)\n")
                 exit(1)
@@ -934,7 +955,7 @@ func runSetup(
             nextRunCommands.append("open \(installedAppPath())")
         }
         if !noStart {
-            nextRunCommands.append("lrcmd restart")
+            nextRunCommands.append("enka restart")
         }
         if !nextRunCommands.isEmpty {
             print("Next (actual run):")
@@ -966,7 +987,7 @@ func runSetup(
         print("Please run:")
         print("  open \(installedAppPath())")
         print("Then enable Accessibility and run:")
-        print("  lrcmd restart")
+        print("  enka restart")
         return
     }
 
@@ -975,7 +996,7 @@ func runSetup(
             print("Accessibility permission missing.")
             print("Manual open command: open \(installedAppPath())")
             print("Please grant Accessibility and then run:")
-            print("  lrcmd restart")
+            print("  enka restart")
             if !dryRun {
                 logToSetup(
                     "\(setupLogPrefix()) [setup] skipping start/restart: noOpen and app permission missing"
@@ -987,7 +1008,7 @@ func runSetup(
         if !noOpen {
             print("Opening \(installedAppPath()) ...")
             do {
-                try runOpenLrcmdApp(logToSetup: dryRun ? nil : logToSetup)
+                try runOpenEnkaApp(logToSetup: dryRun ? nil : logToSetup)
             } catch {
                 print("warning: failed to run open: \(error.localizedDescription)")
                 print("Please run manually:")
@@ -1021,7 +1042,7 @@ func runSetup(
         print("Please run:")
         print("  open \(installedAppPath())")
         print("Then enable Accessibility and run:")
-        print("  lrcmd restart")
+        print("  enka restart")
         return
     }
 
@@ -1035,7 +1056,7 @@ func runSetup(
         print("Please run:")
         print("  open \(installedAppPath())")
         print("Then enable Accessibility and run:")
-        print("  lrcmd restart")
+        print("  enka restart")
         return
     }
 
@@ -1046,7 +1067,7 @@ func runSetup(
         print("Permission granted.")
         print("Skipping launchctl because --no-start was specified.")
         print("Run:")
-        print("  lrcmd restart")
+        print("  enka restart")
         return
     }
 
@@ -1060,14 +1081,13 @@ func runSetup(
 func doWriteConfig(
     at path: String,
     leftSourceId: String,
-    rightSourceId: String,
-    inctlPath: String
+    rightSourceId: String
 ) throws {
-    let json = configurationJSON(inctlPath: inctlPath, leftSourceId: leftSourceId, rightSourceId: rightSourceId)
+    let json = configurationJSON(leftSourceId: leftSourceId, rightSourceId: rightSourceId)
     try json.write(toFile: path, atomically: true, encoding: .utf8)
 }
 
-func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
+func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
     let args = Array(arguments.dropFirst())
 
     if args.isEmpty {
@@ -1075,11 +1095,11 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
     }
 
     if args.first == "--config" {
-        guard args.count == 2 else { throw LrcmdError.invalidArguments }
+        guard args.count == 2 else { throw EnkaError.invalidArguments }
         return .run(configPath: args[1])
     }
 
-    guard let command = args.first else { throw LrcmdError.invalidArguments }
+    guard let command = args.first else { throw EnkaError.invalidArguments }
 
     if command == "run" {
         if args.count == 1 {
@@ -1088,7 +1108,21 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
         if args.count == 3 && args[1] == "--config" {
             return .run(configPath: args[2])
         }
-        throw LrcmdError.invalidArguments
+        throw EnkaError.invalidArguments
+    }
+
+    switch command {
+    case "sources":
+        guard args.count == 1 else { throw EnkaError.invalidArguments }
+        return .sources
+    case "current":
+        guard args.count == 1 else { throw EnkaError.invalidArguments }
+        return .currentSource
+    case "select":
+        guard args.count == 2 else { throw EnkaError.invalidArguments }
+        return .select(args[1])
+    default:
+        break
     }
 
     switch command {
@@ -1107,44 +1141,44 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
             switch flag {
             case "--yes":
                 if autoApprove {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 autoApprove = true
             case "--replace":
                 if replaceExistingConfig {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 replaceExistingConfig = true
             case "--dry-run":
                 if dryRun {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 dryRun = true
             case "--no-open":
                 if noOpen {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 noOpen = true
             case "--no-start":
                 if noStart {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 noStart = true
             case "--wait-accessibility":
                 if didSetWaitAccessibility {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 if index + 1 >= args.count {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 guard let value = Int(args[index + 1]), value >= 0 else {
-                    throw LrcmdError.invalidArguments
+                    throw EnkaError.invalidArguments
                 }
                 waitAccessibilitySeconds = value
                 didSetWaitAccessibility = true
                 index += 1
             default:
-                throw LrcmdError.invalidArguments
+                throw EnkaError.invalidArguments
             }
             index += 1
         }
@@ -1162,10 +1196,10 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
             return .accessibilityStatus(resultFile: nil)
         }
         guard args.count == 3 else {
-            throw LrcmdError.invalidArguments
+            throw EnkaError.invalidArguments
         }
         guard args[1] == "--result-file" else {
-            throw LrcmdError.invalidArguments
+            throw EnkaError.invalidArguments
         }
         return .accessibilityStatus(resultFile: args[2])
     case "uninstall":
@@ -1174,7 +1208,7 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
         }
 
         if args.count > 3 {
-            throw LrcmdError.invalidArguments
+            throw EnkaError.invalidArguments
         }
 
         var autoApprove = false
@@ -1186,7 +1220,7 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
             case "--dry-run":
                 dryRun = true
             default:
-                throw LrcmdError.invalidArguments
+                throw EnkaError.invalidArguments
             }
         }
         return .uninstall(autoApprove: autoApprove, dryRun: dryRun)
@@ -1197,9 +1231,9 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
         if args.count == 2 && args[1] == "--dry-run" {
             return .status(dryRun: true)
         }
-        throw LrcmdError.invalidArguments
+        throw EnkaError.invalidArguments
     case "doctor":
-        guard args.count == 1 else { throw LrcmdError.invalidArguments }
+        guard args.count == 1 else { throw EnkaError.invalidArguments }
         return .doctor
     case "restart":
         if args.count == 1 {
@@ -1208,7 +1242,7 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
         if args.count == 2 && args[1] == "--dry-run" {
             return .restart(dryRun: true)
         }
-        throw LrcmdError.invalidArguments
+        throw EnkaError.invalidArguments
     case "stop":
         if args.count == 1 {
             return .stop(dryRun: false)
@@ -1216,9 +1250,9 @@ func parseArguments(_ arguments: [String]) throws -> LrcmdCommand {
         if args.count == 2 && args[1] == "--dry-run" {
             return .stop(dryRun: true)
         }
-        throw LrcmdError.invalidArguments
+        throw EnkaError.invalidArguments
     default:
-        throw LrcmdError.invalidArguments
+        throw EnkaError.invalidArguments
     }
 }
 
@@ -1226,7 +1260,7 @@ func checkConfigJSON(at path: String) -> String {
     do {
         _ = try loadConfig(path: path)
         return "ok"
-    } catch let error as LrcmdError {
+    } catch let error as EnkaError {
         return "invalid: \(error.description)"
     } catch {
         return "invalid: \(error.localizedDescription)"
@@ -1237,7 +1271,6 @@ func printStatus(configPath: String, dryRun: Bool) {
     let fm = FileManager.default
     let target = launchctlServiceTarget()
     let accessible = checkAccessibilityPermission()
-    let inctlPath = bundledInctlPath()
     let appPath = installedAppPath()
     let appExecutablePath = installedAppExecutablePath()
     let outputLogPath = standardOutputLogPath()
@@ -1249,7 +1282,6 @@ func printStatus(configPath: String, dryRun: Bool) {
     print("App:          \(appPath) (\(fm.fileExists(atPath: appPath) ? "exists" : "missing"))")
     print("App binary:   \(appExecutablePath) (\(fm.fileExists(atPath: appExecutablePath) ? "exists" : "missing"))")
     print("Binary:       \(installedBinaryPath()) (\(fm.fileExists(atPath: installedBinaryPath()) ? "exists" : "missing"))")
-    print("Inctl:        \(inctlPath) (\(fm.fileExists(atPath: inctlPath) ? "exists" : "missing"))")
     print("Logs:         stdout=\(outputLogPath) (\(fm.fileExists(atPath: outputLogPath) ? "exists" : "missing")), stderr=\(errorLogPath) (\(fm.fileExists(atPath: errorLogPath) ? "exists" : "missing"))")
     print("State dir:    \(stateDir) (\(fm.fileExists(atPath: stateDir) ? "exists" : "missing"))")
     print("Accessibility:\(accessible ? " granted" : " missing")")
@@ -1264,7 +1296,7 @@ func printStatus(configPath: String, dryRun: Bool) {
     }
 
     if !fm.fileExists(atPath: launchAgentPlistPath()) {
-        print("LaunchAgent plist missing; run lrcmd setup first.")
+        print("LaunchAgent plist missing; run enka setup first.")
         return
     }
 
@@ -1297,20 +1329,9 @@ func printStatus(configPath: String, dryRun: Bool) {
     }
 }
 
-func isInctlCommand(_ commandPath: String) -> Bool {
-    URL(fileURLWithPath: commandPath).lastPathComponent == "inctl"
-}
-
-func hasSelectIdArguments(_ command: Config.Command) -> Bool {
-    command.arguments.count == 2 &&
-    command.arguments[0] == "select" &&
-    !command.arguments[1].isEmpty
-}
-
 func printDoctor(configPath: String) {
     let fm = FileManager.default
     let plistPath = launchAgentPlistPath()
-    let inctlPath = bundledInctlPath()
     let appPath = installedAppPath()
     let appExecutablePath = installedAppExecutablePath()
     let appInfoPlistPath = installedAppInfoPlistPath()
@@ -1324,7 +1345,7 @@ func printDoctor(configPath: String) {
     printStatus(configPath: configPath, dryRun: true)
 
     if !fm.fileExists(atPath: configPath) {
-        print("next action: lrcmd setup")
+        print("next action: enka setup")
         print("config decode: missing")
     } else {
         let result = checkConfigJSON(at: configPath)
@@ -1341,17 +1362,8 @@ func printDoctor(configPath: String) {
     }
 
     if let config {
-        let leftCommandPath = config.leftCommand.command
-        let rightCommandPath = config.rightCommand.command
-        print("left command executable: \(leftCommandPath) (\(fm.fileExists(atPath: leftCommandPath) ? "exists" : "missing"))")
-        print("right command executable: \(rightCommandPath) (\(fm.fileExists(atPath: rightCommandPath) ? "exists" : "missing"))")
-
-        if isInctlCommand(leftCommandPath) && !hasSelectIdArguments(config.leftCommand) {
-            print("warning: left command arguments should be: select <id>")
-        }
-        if isInctlCommand(rightCommandPath) && !hasSelectIdArguments(config.rightCommand) {
-            print("warning: right command arguments should be: select <id>")
-        }
+        print("left source: \(config.leftTap.source)")
+        print("right source: \(config.rightTap.source)")
     }
 
     if fm.fileExists(atPath: plistPath) {
@@ -1368,7 +1380,7 @@ func printDoctor(configPath: String) {
             print("plist decode: invalid")
         }
     } else {
-        print("launchctl plist missing: next action: lrcmd setup")
+        print("launchctl plist missing: next action: enka setup")
     }
 
     if !fm.fileExists(atPath: appPath) {
@@ -1385,7 +1397,7 @@ func printDoctor(configPath: String) {
 
     if !fm.fileExists(atPath: installedBinaryPath()) {
         print("binary missing")
-        print("next action: lrcmd setup")
+        print("next action: enka setup")
     }
 
     if !fm.fileExists(atPath: stateDir) {
@@ -1399,10 +1411,6 @@ func printDoctor(configPath: String) {
     }
     if !fm.fileExists(atPath: setupLog) {
         print("info: setup log missing (\(setupLog)); typically created by setup (non-dry-run)")
-    }
-
-    if !fm.fileExists(atPath: inctlPath) {
-        print("warning: inctl missing: \(inctlPath)")
     }
 
     if !checkAccessibilityPermission() {
@@ -1450,7 +1458,7 @@ func runRestartCommands(plistPath: String, dryRun: Bool) {
     let uid = getuid()
     let bootoutArgs = ["bootout", "gui/\(uid)", plistPath]
     let bootstrapArgs = ["bootstrap", "gui/\(uid)", plistPath]
-    let kickstartArgs = ["kickstart", "-k", "gui/\(uid)/dev.ultrahope.lrcmd"]
+    let kickstartArgs = ["kickstart", "-k", "gui/\(uid)/dev.ultrahope.enka"]
 
     print("UID: \(uid)")
     print("Planned commands:")
@@ -1507,7 +1515,7 @@ func isSafeInstallRootPath(_ path: String) -> Bool {
         return false
     }
 
-    guard (normalized as NSString).pathComponents.last == "lrcmd" else {
+    guard (normalized as NSString).pathComponents.last == "enka" else {
         return false
     }
 
@@ -1537,17 +1545,21 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
         print("--yes keeps config and installed binaries; remove them interactively if needed.")
     }
 
-    if hasPlist && !dryRun {
-        if runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout") != 0 {
-            print("warning: launchctl bootout failed, continuing uninstall.")
-        }
-    }
-
     var plistResult = fm.fileExists(atPath: plistPath) ? "Kept" : "Missing"
     var configResult = fm.fileExists(atPath: configPath) ? "Kept" : "Missing"
     var binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
 
     let removePlist = autoApprove ? true : confirm("Remove LaunchAgent plist? [y/N]")
+    let removeConfig = !autoApprove && confirm("Remove config file? [y/N]")
+    let removeBinaries = !autoApprove && confirm("Remove installed binaries? [y/N]")
+    let shouldRemoveAnyFiles = removePlist || removeConfig || removeBinaries
+
+    if hasPlist && shouldRemoveAnyFiles && !dryRun {
+        if runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout") != 0 {
+            print("warning: launchctl bootout failed, continuing uninstall.")
+        }
+    }
+
     if removePlist {
         if fm.fileExists(atPath: plistPath) {
             do {
@@ -1571,7 +1583,7 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
 
     if autoApprove {
         configResult = fm.fileExists(atPath: configPath) ? "Kept" : "Missing"
-    } else if confirm("Remove config file? [y/N]") {
+    } else if removeConfig {
         if fm.fileExists(atPath: configPath) {
             do {
                 if dryRun {
@@ -1592,7 +1604,7 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
 
     if autoApprove {
         binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
-    } else if confirm("Remove installed binaries? [y/N]") {
+    } else if removeBinaries {
         if fm.fileExists(atPath: installRoot) {
             if isSafeInstallRootPath(installRoot) {
                 do {
@@ -1631,9 +1643,9 @@ func loadConfig(path: String) throws -> Config {
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(Config.self, from: data)
     } catch let error as DecodingError {
-        throw LrcmdError.configDecodeFailed(path, error)
+        throw EnkaError.configDecodeFailed(path, error)
     } catch {
-        throw LrcmdError.configReadFailed(path, error)
+        throw EnkaError.configReadFailed(path, error)
     }
 }
 
@@ -1707,7 +1719,7 @@ func createEventTap(state: LauncherState) throws -> CFMachPort {
         callback: callback,
         userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(state).toOpaque())
     ) else {
-        throw LrcmdError.eventTapCreationFailed
+        throw EnkaError.eventTapCreationFailed
     }
 
     return eventTap
@@ -1716,15 +1728,18 @@ func createEventTap(state: LauncherState) throws -> CFMachPort {
 func runDaemon(configPath: String) throws {
     let state = LauncherState()
     state.config = try loadConfig(path: configPath)
+    if let config = state.config {
+        try state.preloadInputSources(for: config)
+    }
 
     guard checkAccessibilityPermission() else {
-        throw LrcmdError.accessibilityPermissionRequired
+        throw EnkaError.accessibilityPermissionRequired
     }
 
     let eventTap = try createEventTap(state: state)
 
     guard let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
-        throw LrcmdError.runLoopSourceCreationFailed
+        throw EnkaError.runLoopSourceCreationFailed
     }
 
     CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
@@ -1754,11 +1769,33 @@ do {
                     encoding: .utf8
                 )
             } catch {
-                writeStderr("lrcmd: failed to write accessibility status result to \(resultFile): \(error.localizedDescription)\n")
+                writeStderr("enka: failed to write accessibility status result to \(resultFile): \(error.localizedDescription)\n")
                 exit(1)
             }
         }
         exit(isGranted ? 0 : 1)
+    case .sources:
+        do {
+            for source in try availableInputSources() {
+                print("\(source.id)\t\(source.name)")
+            }
+        } catch {
+            writeStderr("error: failed to list input sources: \(error.localizedDescription)\n")
+            exit(1)
+        }
+    case .currentSource:
+        do {
+            let source = try currentInputSource()
+            print("\(source.id)\t\(source.name)")
+        } catch {
+            writeStderr("error: failed to read current input source: \(error.localizedDescription)\n")
+            exit(1)
+        }
+    case let .select(sourceId):
+        if !selectInputSource(sourceId) {
+            writeStderr("error: failed to select input source '\(sourceId)'\n")
+            exit(1)
+        }
     case let .setup(autoApprove, replaceExistingConfig, dryRun, noOpen, noStart, waitAccessibilitySeconds):
         runSetup(
             autoApprove: autoApprove,
@@ -1777,28 +1814,28 @@ do {
     case let .restart(dryRun):
         let plist = launchAgentPlistPath()
         if !dryRun && !FileManager.default.fileExists(atPath: plist) {
-            writeStderr("error: LaunchAgent plist missing: \(plist). Run lrcmd setup first.\n")
+            writeStderr("error: LaunchAgent plist missing: \(plist). Run enka setup first.\n")
             exit(1)
         }
         runRestartCommands(plistPath: plist, dryRun: dryRun)
     case let .stop(dryRun):
         let plist = launchAgentPlistPath()
         if !dryRun && !FileManager.default.fileExists(atPath: plist) {
-            writeStderr("error: LaunchAgent plist missing: \(plist). Run lrcmd setup first.\n")
+            writeStderr("error: LaunchAgent plist missing: \(plist). Run enka setup first.\n")
             exit(1)
         }
         runStopCommands(plistPath: plist, dryRun: dryRun)
     }
-} catch let error as LrcmdError {
+} catch let error as EnkaError {
     if case .invalidArguments = error {
-        let progname = URL(fileURLWithPath: CommandLine.arguments.first ?? "lrcmd").lastPathComponent
+        let progname = URL(fileURLWithPath: CommandLine.arguments.first ?? "enka").lastPathComponent
         writeStderr(usage(progname: progname) + "\n")
-        writeStderr("lrcmd: \(error.description)\n")
+        writeStderr("enka: \(error.description)\n")
         exit(64)
     }
-    writeStderr("lrcmd: \(error.description)\n")
+    writeStderr("enka: \(error.description)\n")
     exit(1)
 } catch {
-    writeStderr("lrcmd: \(error.localizedDescription)\n")
+    writeStderr("enka: \(error.localizedDescription)\n")
     exit(1)
 }

@@ -2,9 +2,9 @@
 
 set -eu
 
-LRCMD_VERSION=${LRCMD_VERSION:-0.1.0}
-LRCMD_BASE_URL=${LRCMD_BASE_URL:-https://github.com/ultrahope/lrcmd/releases/download/v${LRCMD_VERSION}}
-LRCMD_INSTALL_ROOT=${LRCMD_INSTALL_ROOT:-"$HOME/Applications/lrcmd"}
+ENKA_VERSION=${ENKA_VERSION:-0.1.0}
+ENKA_BASE_URL=${ENKA_BASE_URL:-https://github.com/ultrahope/enka/releases/download/v${ENKA_VERSION}}
+ENKA_INSTALL_ROOT=${ENKA_INSTALL_ROOT:-"$HOME/Applications/enka"}
 
 OS=$(uname -s)
 if [ "$OS" != "Darwin" ]; then
@@ -15,10 +15,10 @@ fi
 ARCH=$(uname -m)
 case "$ARCH" in
   arm64)
-    LRCMD_PLATFORM="macos-arm64"
+    ENKA_PLATFORM="macos-arm64"
     ;;
   x86_64)
-    LRCMD_PLATFORM="macos-x86_64"
+    ENKA_PLATFORM="macos-x86_64"
     ;;
   *)
     echo "error: unsupported architecture: $ARCH" >&2
@@ -26,8 +26,8 @@ case "$ARCH" in
     ;;
 esac
 
-ARCHIVE_NAME="lrcmd-v${LRCMD_VERSION}-${LRCMD_PLATFORM}.tar.gz"
-ARCHIVE_URL="$LRCMD_BASE_URL/$ARCHIVE_NAME"
+ARCHIVE_NAME="enka-v${ENKA_VERSION}-${ENKA_PLATFORM}.tar.gz"
+ARCHIVE_URL="$ENKA_BASE_URL/$ARCHIVE_NAME"
 CHECKSUM_URL="${ARCHIVE_URL}.sha256"
 
 TMP_DIR=$(mktemp -d)
@@ -50,34 +50,32 @@ EXTRACT_DIR="$TMP_DIR/extract"
 mkdir -p "$EXTRACT_DIR"
 tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
 
-if [ ! -x "$EXTRACT_DIR/bin/lrcmd" ] || [ ! -x "$EXTRACT_DIR/bin/inctl" ]; then
-  echo "error: extracted archive does not contain expected binaries" >&2
+if [ ! -x "$EXTRACT_DIR/bin/enka" ]; then
+  echo "error: extracted archive does not contain expected binary" >&2
   exit 1
 fi
-if [ ! -x "$EXTRACT_DIR/Lrcmd.app/Contents/MacOS/Lrcmd" ] || [ ! -f "$EXTRACT_DIR/Lrcmd.app/Contents/Info.plist" ]; then
+if [ ! -x "$EXTRACT_DIR/Enka.app/Contents/MacOS/Enka" ] || [ ! -f "$EXTRACT_DIR/Enka.app/Contents/Info.plist" ]; then
   echo "error: extracted archive does not contain expected app bundle" >&2
   exit 1
 fi
 
-mkdir -p "$LRCMD_INSTALL_ROOT/bin"
-cp "$EXTRACT_DIR/bin/lrcmd" "$LRCMD_INSTALL_ROOT/bin/lrcmd"
-cp "$EXTRACT_DIR/bin/inctl" "$LRCMD_INSTALL_ROOT/bin/inctl"
-mkdir -p "$LRCMD_INSTALL_ROOT/Lrcmd.app"
-rm -rf "$LRCMD_INSTALL_ROOT/Lrcmd.app"
-cp -R "$EXTRACT_DIR/Lrcmd.app" "$LRCMD_INSTALL_ROOT/"
+mkdir -p "$ENKA_INSTALL_ROOT/bin"
+cp "$EXTRACT_DIR/bin/enka" "$ENKA_INSTALL_ROOT/bin/enka"
+mkdir -p "$ENKA_INSTALL_ROOT/Enka.app"
+rm -rf "$ENKA_INSTALL_ROOT/Enka.app"
+cp -R "$EXTRACT_DIR/Enka.app" "$ENKA_INSTALL_ROOT/"
 
 echo "installed:"
-echo "  $LRCMD_INSTALL_ROOT/bin/lrcmd"
-echo "  $LRCMD_INSTALL_ROOT/bin/inctl"
-echo "  $LRCMD_INSTALL_ROOT/Lrcmd.app"
+echo "  $ENKA_INSTALL_ROOT/bin/enka"
+echo "  $ENKA_INSTALL_ROOT/Enka.app"
 echo "setup state:"
 echo "  service/config files were not modified"
 echo "  launchctl was not executed"
 echo "next:"
-echo "  $LRCMD_INSTALL_ROOT/bin/lrcmd setup"
+echo "  $ENKA_INSTALL_ROOT/bin/enka setup"
 echo "  setup handles app open / Accessibility / launchctl by default"
 echo ""
 echo "  If you need manual-only mode:"
-echo "    open $LRCMD_INSTALL_ROOT/Lrcmd.app"
-echo "  Then enable Lrcmd.app in System Settings > Privacy & Security > Accessibility"
-echo "  $LRCMD_INSTALL_ROOT/bin/lrcmd status"
+echo "    open $ENKA_INSTALL_ROOT/Enka.app"
+echo "  Then enable Enka.app in System Settings > Privacy & Security > Accessibility"
+echo "  $ENKA_INSTALL_ROOT/bin/enka status"
