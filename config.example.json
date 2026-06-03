@@ -1,0 +1,10 @@
+{
+  "leftCommand": {
+    "command": "/Users/you/Applications/lrcmd/bin/inctl",
+    "arguments": ["select", "com.apple.keylayout.ABC"]
+  },
+  "rightCommand": {
+    "command": "/Users/you/Applications/lrcmd/bin/inctl",
+    "arguments": ["select", "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"]
+  }
+}

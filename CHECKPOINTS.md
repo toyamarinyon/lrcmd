@@ -20,7 +20,7 @@ Build the first distributable shape of `lrcmd` in this repository.
   - Keep LaunchAgent registration out of runtime behavior.
   - Verify `swift build`.
 
-- [ ] 3. Add setup-oriented installer assets
+- [x] 3. Add setup-oriented installer assets
   - Add `install.sh` that behaves like `lrcmd setup`: build/copy release binaries into a local install root and create config if missing.
   - Do not call `launchctl bootstrap`, `kickstart`, `enable`, or `bootout` in v0.0.1.
   - Add `config.example.json` using bundled `inctl`.

@@ -6,6 +6,38 @@ v0.0.1 also bundles `inctl`, a CLI for listing and selecting macOS input sources
 
 This repository is being prepared for installer-based distribution. v0.0.1 does not automatically register LaunchAgent services.
 
+## Installer usage
+
+Run from the repository root:
+
+```bash
+./install.sh
+```
+
+Optional install locations:
+
+```bash
+LRCMD_INSTALL_ROOT="$HOME/Applications/lrcmd" \
+LRCMD_CONFIG_DIR="$HOME/.config/lrcmd" \
+./install.sh
+```
+
+What `install.sh` does:
+
+- runs `swift build -c release`
+- copies `lrcmd` and `inctl` into `$LRCMD_INSTALL_ROOT/bin` (default: `~/Applications/lrcmd/bin`)
+- creates `$LRCMD_CONFIG_DIR/config.json` if it does not already exist (default: `~/.config/lrcmd/config.json`)
+- leaves an existing config untouched
+
+The generated config points to the installed `inctl` binary and sets:
+
+- left Command to `ABC`
+- right Command to `Hiragana`
+
+See [config.example.json](config.example.json) for the config shape.
+
+v0.0.1 does not generate a LaunchAgent plist and does not run `launchctl`. Any background launch setup is still manual.
+
 ## CLI usage
 
 Build with SwiftPM:
