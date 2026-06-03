@@ -13,7 +13,7 @@ Build the first distributable shape of `lrcmd` in this repository.
   - Add `.gitignore`, README skeleton, and this checkpoint plan.
   - Commit as a baseline.
 
-- [ ] 2. Rename and port CLIs
+- [x] 2. Rename and port CLIs
   - Port the current `cmd-launcher` behavior as executable `lrcmd`.
   - Port the current `input-source` behavior as executable `inctl`.
   - Update default config path to `~/.config/lrcmd/config.json`.
