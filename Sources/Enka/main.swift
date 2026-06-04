@@ -18,7 +18,6 @@ enum EnkaError: Error, CustomStringConvertible {
     case accessibilityPermissionRequired
     case configReadFailed(String, Error)
     case configDecodeFailed(String, Error)
-    case configMissingInputSource(String)
     case eventTapCreationFailed
     case runLoopSourceCreationFailed
 
@@ -32,8 +31,6 @@ enum EnkaError: Error, CustomStringConvertible {
             return "Failed to read config at '\(path)': \(error.localizedDescription)"
         case let .configDecodeFailed(path, error):
             return "Invalid config at '\(path)': \(error.localizedDescription)"
-        case let .configMissingInputSource(sourceId):
-            return "Configuration input source not found: \(sourceId)"
         case .eventTapCreationFailed:
             return "Failed to create keyboard event tap. Check Accessibility permission."
         case .runLoopSourceCreationFailed:
@@ -55,13 +52,12 @@ struct KeyState {
 final class LauncherState {
     private let leftKeyCode: CGKeyCode = 55
     private let rightKeyCode: CGKeyCode = 54
+    private let leftTapKeyCode: CGKeyCode = 102
+    private let rightTapKeyCode: CGKeyCode = 104
 
     private var leftState = KeyState()
     private var rightState = KeyState()
     var config: Config?
-    private var leftInputSource: TISInputSource?
-    private var rightInputSource: TISInputSource?
-    private var inputSourceCache: [String: TISInputSource] = [:]
 
     func handle(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -136,72 +132,36 @@ final class LauncherState {
                 leftState.isPressed = false
                 leftState.sawOtherKey = false
             }
-            guard leftState.isPressed, !leftState.sawOtherKey, let inputSource = leftInputSource else {
+            guard leftState.isPressed, !leftState.sawOtherKey else {
                 return
             }
-            _ = TISSelectInputSource(inputSource)
+            postTapKey(leftTapKeyCode)
 
         case .right:
             defer {
                 rightState.isPressed = false
                 rightState.sawOtherKey = false
             }
-            guard rightState.isPressed, !rightState.sawOtherKey, let inputSource = rightInputSource else {
+            guard rightState.isPressed, !rightState.sawOtherKey else {
                 return
             }
-            _ = TISSelectInputSource(inputSource)
+            postTapKey(rightTapKeyCode)
         }
     }
 
-    func preloadInputSources(for config: Config) throws {
-        try cacheAllInputSources()
-        self.leftInputSource = inputSource(for: config.leftTap.source)
-        self.rightInputSource = inputSource(for: config.rightTap.source)
-
-        if self.leftInputSource == nil {
-            throw EnkaError.configMissingInputSource(config.leftTap.source)
+    private func postTapKey(_ keyCode: CGKeyCode) {
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            return
         }
-        if self.rightInputSource == nil {
-            throw EnkaError.configMissingInputSource(config.rightTap.source)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) else {
+            return
         }
+        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return
+        }
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
-
-    private func inputSource(for id: String) -> TISInputSource? {
-        guard let source = inputSourceCache[id] else {
-            return nil
-        }
-        return source
-    }
-
-    private func cacheAllInputSources() throws {
-        inputSourceCache.removeAll()
-        let sourceList = TISCreateInputSourceList(nil, false).takeRetainedValue()
-        guard let sources = sourceList as? [TISInputSource] else {
-            throw EnkaError.configMissingInputSource("(all)")
-        }
-
-        for source in sources {
-            if let sourceId = stringProperty(source, key: kTISPropertyInputSourceID) {
-                inputSourceCache[sourceId] = source
-            }
-        }
-
-        if inputSourceCache.isEmpty {
-            throw EnkaError.configMissingInputSource("(all)")
-        }
-    }
-
-    private func stringProperty(_ source: TISInputSource, key: CFString) -> String? {
-        guard let rawValue = TISGetInputSourceProperty(source, key) else {
-            return nil
-        }
-
-        let unmanaged = Unmanaged<CFTypeRef>.fromOpaque(rawValue)
-        let value = unmanaged.takeUnretainedValue()
-        return value as? String
-    }
-
-    
 }
 
 func usage(progname: String) -> String {
@@ -350,7 +310,7 @@ func escapeXML(_ value: String) -> String {
         .replacingOccurrences(of: "'", with: "&apos;")
 }
 
-func launchAgentPlist(configPath: String) -> String {
+func launchAgentPlist() -> String {
     let programPath = installedAppExecutablePath()
     let logPath = standardOutputLogPath()
     let errPath = standardErrorLogPath()
@@ -366,8 +326,6 @@ func launchAgentPlist(configPath: String) -> String {
       <array>
         <string>\(escapeXML(programPath))</string>
         <string>run</string>
-        <string>--config</string>
-        <string>\(escapeXML(configPath))</string>
       </array>
       <key>RunAtLoad</key>
       <true/>
@@ -555,18 +513,10 @@ func configurationJSON(leftSourceId: String, rightSourceId: String) -> String {
     """
 }
 
-func printSetupSummary(
-    leftSourceId: String,
-    rightSourceId: String,
-    leftSourceName: String,
-    rightSourceName: String,
-    configPath: String,
-    plistPath: String
-) {
+func printSetupSummary(plistPath: String) {
     print("Summary:")
-    print("  left source:  \(leftSourceId)/\(leftSourceName)")
-    print("  right source: \(rightSourceId)/\(rightSourceName)")
-    print("  config path:   \(configPath)")
+    print("  left Command:  posts JIS Eisuu key (102)")
+    print("  right Command: posts JIS Kana key (104)")
     print("  plist path:    \(plistPath)")
     print("  app path:      \(installedAppPath())")
     print("  enka binary:  \(installedBinaryPath())")
@@ -759,7 +709,6 @@ func runSetup(
 ) {
     let configPath = defaultConfigPath()
     let plistPath = launchAgentPlistPath()
-    let configDir = defaultConfigDirectory()
     let plistDir = (plistPath as NSString).deletingLastPathComponent
     let stateDir = stateDirectoryPath()
     let setupLog = setupLogPath()
@@ -782,166 +731,39 @@ func runSetup(
         )
     }
 
-    let availableSources: [InputSource]?
-    do {
-        availableSources = try availableInputSources()
-    } catch {
-        print("warning: could not list input sources: \(error.localizedDescription); using defaults.")
-        availableSources = nil
+    printSetupSummary(plistPath: plistPath)
+    if replaceExistingConfig {
+        print("Note: --replace is accepted for compatibility; setup no longer writes config.")
     }
-
-    let preferredLeft = "com.apple.keylayout.ABC"
-    let fallbackLeft = "com.apple.keylayout.US"
-    let preferredRight = "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
-
-    let leftSourceId: String
-    let rightSourceId: String
-
-    if autoApprove {
-        leftSourceId = selectedInputSourceId(preferred: preferredLeft, fallback: fallbackLeft, available: availableSources)
-        rightSourceId = preferredRight
-    } else if let sources = availableSources, !sources.isEmpty {
-        print("Available input sources:")
-        for (index, source) in sources.enumerated() {
-            print("  \(index + 1). \(source.id)    \(source.name)")
-        }
-
-        let leftDefault = defaultInputSourceIndex(
-            available: sources,
-            preferred: preferredLeft,
-            fallback: fallbackLeft
-        )
-        let rightDefault = defaultInputSourceIndex(
-            available: sources,
-            preferred: preferredRight,
-            fallback: preferredRight
-        )
-
-        let selectedLeftSource = chooseInputSource(
-            prompt: "Choose left source [default \(leftDefault)]:",
-            sources: sources,
-            defaultIndex: leftDefault
-        )
-        let selectedRightSource = chooseInputSource(
-            prompt: "Choose right source [default \(rightDefault)]:",
-            sources: sources,
-            defaultIndex: rightDefault
-        )
-
-        leftSourceId = selectedLeftSource.id
-        rightSourceId = selectedRightSource.id
-    } else {
-        leftSourceId = selectedInputSourceId(preferred: preferredLeft, fallback: fallbackLeft, available: availableSources)
-        rightSourceId = preferredRight
-    }
-
-    let leftSourceName = inputSourceName(for: leftSourceId, in: availableSources ?? [])
-    let rightSourceName = inputSourceName(for: rightSourceId, in: availableSources ?? [])
-    printSetupSummary(
-        leftSourceId: leftSourceId,
-        rightSourceId: rightSourceId,
-        leftSourceName: leftSourceName,
-        rightSourceName: rightSourceName,
-        configPath: configPath,
-        plistPath: plistPath
-    )
 
     let fm = FileManager.default
-    var doWritePlist = false
-    var doWriteConfigFile = false
     let previousPlistExists = fm.fileExists(atPath: plistPath)
-    var configResult = "Kept"
     var plistResult = "Kept"
 
     if dryRun {
         print("Running setup in dry-run mode. No files will be written.")
+        print("No config.json will be created or modified.")
     }
 
-    if fm.fileExists(atPath: configPath) {
-        print("Config exists: \(configPath)")
-        if replaceExistingConfig {
-            if autoApprove {
-                print("Replacing existing config: \(configPath)")
-                doWriteConfigFile = true
-                doWritePlist = true
-                configResult = "Updated"
-            } else if confirm("Replace existing config and update LaunchAgent plist? [y/N]") {
-                print("Replacing existing config: \(configPath)")
-                doWriteConfigFile = true
-                doWritePlist = true
-                configResult = "Updated"
-            } else {
-                print("No changes were made.")
-                return
-            }
-        } else if autoApprove {
-            print("Config already exists. Keeping existing config (not replaced without --replace).")
-            configResult = "Kept"
-            doWritePlist = true
-        } else if confirm("Keep existing config and update LaunchAgent plist? [Y/n]", defaultYes: true) {
-            configResult = "Kept"
-            doWritePlist = true
-        } else {
-            print("No changes were made.")
-            return
-        }
+    if dryRun {
+        print("Planned file write: \(plistPath)")
+        print("  new LaunchAgent plist content")
+        plistResult = previousPlistExists ? "Updated (would overwrite)" : "Created"
     } else {
-        if autoApprove || confirm("Create config and LaunchAgent plist? [y/N]") {
-            doWriteConfigFile = true
-            doWritePlist = true
-            configResult = "Created"
-        } else {
-            print("No changes were made.")
-            return
+        do {
+            try ensureDirectory(atPath: plistDir)
+            try ensureDirectory(atPath: stateDir)
+            let plistContent = launchAgentPlist()
+            try plistContent.write(toFile: plistPath, atomically: true, encoding: .utf8)
+            plistResult = previousPlistExists ? "Updated (overwritten)" : "Created"
+        } catch {
+            writeStderr("error: failed to write launch agent plist at \(plistPath): \(error.localizedDescription)\n")
+            exit(1)
         }
+        logToSetup("\(setupLogPrefix()) [setup] wrote plist: \(plistPath)")
     }
 
-    if doWriteConfigFile {
-        if dryRun {
-            print("Planned file write: \(configPath)")
-        } else {
-            do {
-                try ensureDirectory(atPath: configDir)
-                try ensureDirectory(atPath: plistDir)
-                try ensureDirectory(atPath: stateDir)
-                try doWriteConfig(at: configPath, leftSourceId: leftSourceId, rightSourceId: rightSourceId)
-            } catch {
-                writeStderr("error: failed to write config at \(configPath): \(error.localizedDescription)\n")
-                exit(1)
-            }
-            logToSetup("\(setupLogPrefix()) [setup] wrote config: \(configPath)")
-        }
-    }
-
-    if doWritePlist {
-        if dryRun {
-            print("Planned file write: \(plistPath)")
-            print("  new LaunchAgent plist content")
-            plistResult = previousPlistExists ? "Updated (would overwrite)" : "Created"
-        } else {
-            do {
-                if !doWriteConfigFile {
-                    try ensureDirectory(atPath: plistDir)
-                    try ensureDirectory(atPath: stateDir)
-                }
-                let plistContent = launchAgentPlist(configPath: configPath)
-                try plistContent.write(toFile: plistPath, atomically: true, encoding: .utf8)
-                plistResult = previousPlistExists ? "Updated (overwritten)" : "Created"
-            } catch {
-                writeStderr("error: failed to write launch agent plist at \(plistPath): \(error.localizedDescription)\n")
-                exit(1)
-            }
-            logToSetup("\(setupLogPrefix()) [setup] wrote plist: \(plistPath)")
-        }
-    }
-
-    let didChange = doWriteConfigFile || doWritePlist
-    if !didChange {
-        print("No changes were made.")
-        return
-    }
-
-    print("Config: \(configResult): \(configPath)")
+    print("Config: kept (daemon no longer requires a config file)")
     print("Plist:  \(plistResult): \(plistPath)")
 
     if dryRun {
@@ -968,18 +790,17 @@ func runSetup(
         return
     }
 
-    let shouldOpen = doWritePlist || doWriteConfigFile
     let appExecutablePath = installedAppExecutablePath()
     let appBundlePath = installedAppPath()
-    let permissionGrantedByApp = shouldOpen ? runAccessibilityStatusSubcommand(
+    let permissionGrantedByApp = runAccessibilityStatusSubcommand(
         executablePath: appExecutablePath,
         appBundlePath: appBundlePath,
         logToSetup: dryRun ? nil : logToSetup
-    ) : true
+    )
     var permissionGranted = permissionGrantedByApp ?? false
     var proceedWithoutAppStatus = false
 
-    if shouldOpen && permissionGrantedByApp == nil {
+    if permissionGrantedByApp == nil {
         if !dryRun {
             logToSetup("\(setupLogPrefix()) [setup] skipping start/restart: app status unavailable before open")
         }
@@ -991,7 +812,7 @@ func runSetup(
         return
     }
 
-    if shouldOpen && !permissionGranted {
+    if !permissionGranted {
         if noOpen {
             print("Accessibility permission missing.")
             print("Manual open command: open \(installedAppPath())")
@@ -1345,8 +1166,7 @@ func printDoctor(configPath: String) {
     printStatus(configPath: configPath, dryRun: true)
 
     if !fm.fileExists(atPath: configPath) {
-        print("next action: enka setup")
-        print("config decode: missing")
+        print("config decode: missing (ok; daemon no longer requires config)")
     } else {
         let result = checkConfigJSON(at: configPath)
         print("config decode: \(result)")
@@ -1727,9 +1547,12 @@ func createEventTap(state: LauncherState) throws -> CFMachPort {
 
 func runDaemon(configPath: String) throws {
     let state = LauncherState()
-    state.config = try loadConfig(path: configPath)
-    if let config = state.config {
-        try state.preloadInputSources(for: config)
+    if FileManager.default.fileExists(atPath: configPath) {
+        do {
+            state.config = try loadConfig(path: configPath)
+        } catch {
+            writeStderr("warning: could not load config at \(configPath): \(error.localizedDescription)\n")
+        }
     }
 
     guard checkAccessibilityPermission() else {

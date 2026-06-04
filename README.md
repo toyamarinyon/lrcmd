@@ -1,8 +1,8 @@
 # enka
 
-`enka` maps left/right Command key single-taps to macOS input sources.
+`enka` maps left/right Command key single-taps to macOS input-source toggle keys.
 
-It is intentionally focused on input source switching: the daemon resolves configured input source IDs at startup, then switches with `TISSelectInputSource` on Command release.
+It is intentionally focused on input source switching: the daemon watches Command releases and posts the JIS 英数 / かな key events directly with `CGEvent.post`.
 
 ## Install
 
@@ -35,10 +35,9 @@ Complete onboarding after install:
 
 ## Setup
 
-`enka setup` generates runtime files from the installed binary:
+`enka setup` installs or refreshes the LaunchAgent and supporting files for the app bundle:
 
-- shows input source candidates and lets you choose left/right source IDs
-- writes/updates config and LaunchAgent plist
+- writes/updates the LaunchAgent plist
 - opens `Enka.app` unless `--no-open` is passed
 - waits for Accessibility permission (default 120 seconds)
 - starts/restarts the LaunchAgent unless `--no-start` is passed
@@ -46,8 +45,7 @@ Complete onboarding after install:
 Flags:
 
 - `--yes`: use recommended defaults without prompts
-- `--replace`: replace an existing config file
-- `--dry-run`: show planned config/plist paths, app open, permission wait, and restart without writing files, opening apps, or running `launchctl`
+- `--dry-run`: show planned plist paths, app open, permission wait, and restart without writing files, opening apps, or running `launchctl`
 - `--no-open`: skip opening `Enka.app`
 - `--no-start`: skip `launchctl` calls
 - `--wait-accessibility <seconds>`: customize permission wait timeout
@@ -108,10 +106,12 @@ Example config:
 }
 ```
 
+This config is kept for CLI reference and legacy compatibility. The daemon no longer needs it for tap switching.
+
 Behavior:
 
-- left Command single-tap selects `leftTap.source`
-- right Command single-tap selects `rightTap.source`
+- left Command single-tap posts the JIS 英数 key event
+- right Command single-tap posts the JIS かな key event
 - pressing another key while Command is held cancels the action
 - pressing both Command keys together cancels both actions
 

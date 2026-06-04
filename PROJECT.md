@@ -2,12 +2,12 @@
 
 `enka` is a small macOS input source switcher for left/right Command key single-taps.
 
-The product is intentionally not a general command launcher. Configured taps point directly at input source IDs, and the daemon keeps the key-event hot path as short as possible.
+The product is intentionally not a general command launcher. The daemon keeps the key-event hot path as short as possible and posts the dedicated JIS input toggle keys directly.
 
 ## Product Principles
 
 - **Focused:** switch macOS input sources, avoid general launcher behavior.
-- **Fast:** resolve input sources at startup; select cached sources on Command release.
+- **Fast:** keep the tap path minimal; post the toggle key directly on Command release.
 - **Inspectable:** setup, status, and release scripts should show exactly what they touch.
 - **Reversible:** uninstall and reset paths should remove only owned `enka` artifacts.
 - **Respectful of macOS permissions:** use an app bundle identity and standard Accessibility prompts.
@@ -17,7 +17,7 @@ The product is intentionally not a general command launcher. Configured taps poi
 - Rename the tool from `lrcmd` to `enka`.
 - Ship one CLI binary, `enka`, plus `Enka.app` for Accessibility identity.
 - Remove the separate `inctl` helper binary by folding input source operations into `enka sources/current/select`.
-- Replace command-based config with first-class input source config:
+- Keep the existing config surface for `sources/current/select` and legacy references, while the daemon behavior uses direct key posting:
 
 ```json
 {
@@ -36,7 +36,7 @@ The product is intentionally not a general command launcher. Configured taps poi
 - CLI: `~/Applications/enka/bin/enka`
 - App bundle: `~/Applications/enka/Enka.app`
 - LaunchAgent: `~/Library/LaunchAgents/dev.ultrahope.enka.plist`
-- Config: `~/.config/enka/config.json`
+- Config: `~/.config/enka/config.json` (legacy / CLI reference only; daemon no longer requires it)
 - State/log directory: `~/.local/state/enka`
 - Release archive: `enka-v<version>-<platform>.tar.gz`
 
