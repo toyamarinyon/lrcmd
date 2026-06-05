@@ -9,7 +9,7 @@ It is intentionally focused on input source switching: the daemon watches Comman
 Hosted installer (recommended):
 
 ```bash
-curl -fsSL https://install.ultrahope.dev/enka | sh
+curl -fsSL https://enka.ultrahope.dev/install | sh
 ```
 
 This downloads the release archive and runs setup automatically:
@@ -35,18 +35,21 @@ Environment overrides:
 ```bash
 ENKA_VERSION=0.1.0 \
 ENKA_INSTALL_ROOT="$HOME/Applications/enka" \
-ENKA_INSTALL_BASE_URL="https://install.ultrahope.dev/enka/releases" \
+ENKA_INSTALL_ORIGIN="https://enka.ultrahope.dev" \
+ENKA_RELEASE_BASE_URL="https://github.com/toyamarinyon/enka/releases/download" \
 ENKA_BASE_URL="https://example.com/custom/path" \
 ENKA_SKIP_SETUP=1 \
 ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS=30 \
-sh scripts/install-release.sh
+sh -c "$(curl -fsSL https://enka.ultrahope.dev/install)"
 ```
 
 Notes:
 
 - `ENKA_SKIP_SETUP=1` skips the automatic `setup` step.
 - `ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS` enables a custom timeout for the permission wait.
-- `ENKA_BASE_URL` sets a fully-resolved base path and bypasses the versioned hosted convention.
+- `ENKA_INSTALL_ORIGIN` sets the product install site used to resolve `latest.json`.
+- `ENKA_RELEASE_BASE_URL` sets the release download base; by default, artifacts are downloaded from GitHub Releases.
+- `ENKA_BASE_URL` sets a fully-resolved base path and bypasses the default release download convention.
 
 Local install from source:
 
@@ -185,3 +188,15 @@ Verify local release artifacts:
 sh scripts/package-release.sh
 sh scripts/verify-release.sh
 ```
+
+GitHub Pages installer site:
+
+```text
+docs/
+  CNAME
+  install
+  latest.json
+```
+
+Configure GitHub Pages to publish from `main` / `docs`, then assign the custom
+domain `enka.ultrahope.dev`.
