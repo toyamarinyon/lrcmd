@@ -189,6 +189,13 @@ sh scripts/package-release.sh
 sh scripts/verify-release.sh
 ```
 
+Publish a GitHub Release:
+
+1. Open the `Release` workflow in GitHub Actions.
+2. Run it manually with a version such as `0.1.0` (without the leading `v`).
+3. The workflow builds and verifies the archive on macOS, then publishes
+   `v0.1.0` with the `.tar.gz` archive and matching `.sha256` file.
+
 GitHub Pages installer site:
 
 ```text

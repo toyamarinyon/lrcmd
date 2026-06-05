@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v, for example 0.1.0
+        required: true
+        default: 0.1.0
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        env:
+          ENKA_VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          case "$ENKA_VERSION" in
+            v*)
+              echo "version must not include the leading v: $ENKA_VERSION" >&2
+              exit 1
+              ;;
+            *[!0-9.]* | "" | *..* | .* | *.)
+              echo "version must be a dotted numeric version like 0.1.0: $ENKA_VERSION" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          uname -a
+          uname -m
+
+      - name: Package release
+        env:
+          ENKA_VERSION: ${{ inputs.version }}
+        run: sh scripts/package-release.sh
+
+      - name: Verify release
+        env:
+          ENKA_VERSION: ${{ inputs.version }}
+        run: sh scripts/verify-release.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENKA_VERSION: ${{ inputs.version }}
+          ENKA_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -eu
+          tag="v$ENKA_VERSION"
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<EOF
+          Release artifacts for enka $tag.
+
+          Install:
+
+          \`\`\`sh
+          curl -fsSL https://enka.ultrahope.dev/install | sh
+          \`\`\`
+          EOF
+
+          prerelease_args=""
+          if [ "$ENKA_PRERELEASE" = "true" ]; then
+            prerelease_args="--prerelease"
+          fi
+
+          gh release create "$tag" \
+            dist/enka-v"$ENKA_VERSION"-*.tar.gz \
+            dist/enka-v"$ENKA_VERSION"-*.tar.gz.sha256 \
+            --title "enka $tag" \
+            --notes-file "$notes_file" \
+            $prerelease_args
