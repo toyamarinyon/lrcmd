@@ -6,27 +6,55 @@ It is intentionally focused on input source switching: the daemon watches Comman
 
 ## Install
 
-Run from the repository root:
+Hosted installer (recommended):
 
 ```bash
-./install.sh
+curl -fsSL https://install.ultrahope.dev/enka | sh
 ```
 
-Optional install location:
+This downloads the release archive and runs setup automatically:
+- downloads the hosted release and checksum
+- installs to `~/Applications/enka` by default
+- installs `bin/enka` and `Enka.app`
+- runs setup, which opens `Enka.app` and waits for Accessibility permission
+- writes the LaunchAgent plist
+- starts/restarts the LaunchAgent after permission is granted
+- if permission is not granted before timeout, setup exits with retry guidance
+
+Setup details in one line:
 
 ```bash
+~/Applications/enka/bin/enka setup --yes
+```
+
+Accessibility permission cannot be granted automatically by the installer.
+`setup` opens `Enka.app` and waits for you to enable it in System Settings; if permission is not granted before timeout, it exits with retry guidance.
+
+Environment overrides:
+
+```bash
+ENKA_VERSION=0.1.0 \
 ENKA_INSTALL_ROOT="$HOME/Applications/enka" \
+ENKA_INSTALL_BASE_URL="https://install.ultrahope.dev/enka/releases" \
+ENKA_BASE_URL="https://example.com/custom/path" \
+ENKA_SKIP_SETUP=1 \
+ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS=30 \
+sh scripts/install-release.sh
+```
+
+Notes:
+
+- `ENKA_SKIP_SETUP=1` skips the automatic `setup` step.
+- `ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS` enables a custom timeout for the permission wait.
+- `ENKA_BASE_URL` sets a fully-resolved base path and bypasses the versioned hosted convention.
+
+Local install from source:
+
+```bash
 ./install.sh
 ```
 
-What `install.sh` does:
-
-- runs `swift build -c release`
-- installs `bin/enka` and `Enka.app` under `$ENKA_INSTALL_ROOT` (default: `~/Applications/enka`)
-- does not create/update a LaunchAgent plist
-- does not execute `launchctl`
-
-Complete onboarding after install:
+`./install.sh` builds from local source and installs files only under `$ENKA_INSTALL_ROOT` (default: `~/Applications/enka`). It does not run `setup` automatically; run it yourself when needed:
 
 ```bash
 ~/Applications/enka/bin/enka setup
@@ -157,5 +185,3 @@ Verify local release artifacts:
 sh scripts/package-release.sh
 sh scripts/verify-release.sh
 ```
-
-Hosted installer defaults to `~/Applications/enka` and installs only `bin/enka` plus `Enka.app`.

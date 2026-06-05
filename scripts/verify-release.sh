@@ -115,7 +115,8 @@ echo "verify: running hosted installer"
 (
   ENKA_BASE_URL="file://$ABS_DIST_DIR"
   ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT"
-  export ENKA_BASE_URL ENKA_INSTALL_ROOT
+  ENKA_SKIP_SETUP=1
+  export ENKA_BASE_URL ENKA_INSTALL_ROOT ENKA_SKIP_SETUP
   sh scripts/install-release.sh
 )
 

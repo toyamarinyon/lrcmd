@@ -3,8 +3,10 @@
 set -eu
 
 ENKA_VERSION=${ENKA_VERSION:-0.1.0}
-ENKA_BASE_URL=${ENKA_BASE_URL:-https://github.com/ultrahope/enka/releases/download/v${ENKA_VERSION}}
+ENKA_INSTALL_BASE_URL=${ENKA_INSTALL_BASE_URL:-https://install.ultrahope.dev/enka/releases}
 ENKA_INSTALL_ROOT=${ENKA_INSTALL_ROOT:-"$HOME/Applications/enka"}
+ENKA_SKIP_SETUP=${ENKA_SKIP_SETUP:-0}
+ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS=${ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS:-}
 
 OS=$(uname -s)
 if [ "$OS" != "Darwin" ]; then
@@ -27,7 +29,11 @@ case "$ARCH" in
 esac
 
 ARCHIVE_NAME="enka-v${ENKA_VERSION}-${ENKA_PLATFORM}.tar.gz"
-ARCHIVE_URL="$ENKA_BASE_URL/$ARCHIVE_NAME"
+if [ -n "${ENKA_BASE_URL:-}" ]; then
+  ARCHIVE_URL="${ENKA_BASE_URL%/}/${ARCHIVE_NAME}"
+else
+  ARCHIVE_URL="${ENKA_INSTALL_BASE_URL%/}/v${ENKA_VERSION}/${ARCHIVE_NAME}"
+fi
 CHECKSUM_URL="${ARCHIVE_URL}.sha256"
 
 TMP_DIR=$(mktemp -d)
@@ -61,21 +67,56 @@ fi
 
 mkdir -p "$ENKA_INSTALL_ROOT/bin"
 cp "$EXTRACT_DIR/bin/enka" "$ENKA_INSTALL_ROOT/bin/enka"
-mkdir -p "$ENKA_INSTALL_ROOT/Enka.app"
+mkdir -p "$ENKA_INSTALL_ROOT"
 rm -rf "$ENKA_INSTALL_ROOT/Enka.app"
 cp -R "$EXTRACT_DIR/Enka.app" "$ENKA_INSTALL_ROOT/"
+
+if [ ! -x "$ENKA_INSTALL_ROOT/bin/enka" ] || [ ! -x "$ENKA_INSTALL_ROOT/Enka.app/Contents/MacOS/Enka" ] || [ ! -f "$ENKA_INSTALL_ROOT/Enka.app/Contents/Info.plist" ]; then
+  echo "error: installed files are missing or not runnable" >&2
+  exit 1
+fi
 
 echo "installed:"
 echo "  $ENKA_INSTALL_ROOT/bin/enka"
 echo "  $ENKA_INSTALL_ROOT/Enka.app"
-echo "setup state:"
-echo "  service files were not modified"
-echo "  launchctl was not executed"
-echo "next:"
-echo "  $ENKA_INSTALL_ROOT/bin/enka setup"
-echo "  setup handles app open / Accessibility / launchctl by default"
 echo ""
-echo "  If you need manual-only mode:"
-echo "    open $ENKA_INSTALL_ROOT/Enka.app"
-echo "  Then enable Enka.app in System Settings > Privacy & Security > Accessibility"
-echo "  $ENKA_INSTALL_ROOT/bin/enka status"
+
+if [ "$ENKA_SKIP_SETUP" = "1" ]; then
+  echo "setup: skipped by ENKA_SKIP_SETUP=1"
+  echo "  $ENKA_INSTALL_ROOT/bin/enka"
+  echo "  next: run $ENKA_INSTALL_ROOT/bin/enka setup --yes"
+  echo "  setup handles app open / Accessibility permission wait / launchctl by default"
+  exit 0
+fi
+
+echo "before setup:"
+echo "  setup may open Enka.app and wait for Accessibility permission."
+echo "  macOS permission must be granted manually in System Settings."
+echo "running setup"
+if [ -n "$ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS" ]; then
+  echo "  command: $ENKA_INSTALL_ROOT/bin/enka setup --yes --wait-accessibility $ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS"
+  if ! "$ENKA_INSTALL_ROOT/bin/enka" setup --yes --wait-accessibility "$ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS"; then
+    echo "error: setup failed. run \"$ENKA_INSTALL_ROOT/bin/enka setup --yes --wait-accessibility $ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS\" to retry" >&2
+    exit 1
+  fi
+else
+  echo "  command: $ENKA_INSTALL_ROOT/bin/enka setup --yes"
+  if ! "$ENKA_INSTALL_ROOT/bin/enka" setup --yes; then
+    echo "error: setup failed. run \"$ENKA_INSTALL_ROOT/bin/enka setup --yes\" to retry" >&2
+    exit 1
+  fi
+fi
+
+echo "setup complete"
+
+echo ""
+echo "install complete:"
+echo "  application: $ENKA_INSTALL_ROOT/Enka.app"
+echo "  binary: $ENKA_INSTALL_ROOT/bin/enka"
+echo "  setup has run; LaunchAgent state depends on Accessibility permission."
+echo ""
+echo "note:"
+echo "  If Accessibility permission was not granted during setup, retry with:"
+echo "    $ENKA_INSTALL_ROOT/bin/enka setup --yes"
+echo "  Check status with:"
+echo "    $ENKA_INSTALL_ROOT/bin/enka status"
