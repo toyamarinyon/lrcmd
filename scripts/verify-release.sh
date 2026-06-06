@@ -114,10 +114,11 @@ rm -rf "$ENKA_VERIFY_INSTALL_ROOT"
 echo "verify: running hosted installer"
 (
   ENKA_BASE_URL="file://$ABS_DIST_DIR"
+  ENKA_VERSION="$ENKA_VERSION"
   ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT"
   ENKA_SKIP_SETUP=1
-  export ENKA_BASE_URL ENKA_INSTALL_ROOT ENKA_SKIP_SETUP
-  sh scripts/install-release.sh
+  export ENKA_BASE_URL ENKA_VERSION ENKA_INSTALL_ROOT ENKA_SKIP_SETUP
+  sh docs/install
 )
 
 if [ ! -x "$ENKA_VERIFY_INSTALL_ROOT/bin/enka" ]; then
@@ -171,7 +172,7 @@ ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT" "$ENKA_VERIFY_INSTALL_ROOT/bin/enk
 cat <<EOF
 verification passed:
 - release artifacts: checksum + archive members
-- hosted installer path: scripts/install-release.sh
+- hosted installer path: docs/install
 - installed binary: $ENKA_VERIFY_INSTALL_ROOT/bin/enka
 - installed app: $ENKA_VERIFY_INSTALL_ROOT/Enka.app
 - CLI status check: enka status --dry-run

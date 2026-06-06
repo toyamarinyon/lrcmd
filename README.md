@@ -51,18 +51,6 @@ Notes:
 - `ENKA_RELEASE_BASE_URL` sets the release download base; by default, artifacts are downloaded from GitHub Releases.
 - `ENKA_BASE_URL` sets a fully-resolved base path and bypasses the default release download convention.
 
-Local install from source:
-
-```bash
-./install.sh
-```
-
-`./install.sh` builds from local source and installs files only under `$ENKA_INSTALL_ROOT` (default: `~/Applications/enka`). It does not run `setup` automatically; run it yourself when needed:
-
-```bash
-~/Applications/enka/bin/enka setup
-```
-
 ## Setup
 
 `enka setup` installs or refreshes the LaunchAgent and supporting files for the app bundle:
@@ -91,6 +79,7 @@ Build with SwiftPM:
 
 ```bash
 swift build
+swift build -c release
 ```
 
 Input source commands:
@@ -173,6 +162,8 @@ enka-v0.1.0-macos-arm64.tar.gz
   README.md
   LICENSE (if present)
 ```
+
+`Enka.app` metadata is copied from `resources/Enka.app`.
 
 Customize version/output:
 
