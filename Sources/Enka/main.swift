@@ -171,6 +171,47 @@ func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data(message.utf8))
 }
 
+func printStep(_ message: String) {
+    if isatty(STDOUT_FILENO) == 1 {
+        print("→ \(message)", terminator: "")
+        fflush(stdout)
+    } else {
+        print("→ \(message)")
+    }
+}
+
+func printDone(_ message: String) {
+    if isatty(STDOUT_FILENO) == 1 {
+        print("\r\u{001B}[K✓ \(message)")
+    } else {
+        print("✓ \(message)")
+    }
+}
+
+func printAccessibilityWait() {
+    print("→ Waiting for Accessibility permission")
+    if isatty(STDOUT_FILENO) == 1 {
+        print("  Enka needs Accessibility to observe Command key taps.", terminator: "")
+        fflush(stdout)
+    } else {
+        print("  Enka needs Accessibility to observe Command key taps.")
+    }
+}
+
+func printAccessibilityDone(replacingWait: Bool) {
+    if isatty(STDOUT_FILENO) == 1 && replacingWait {
+        print("\r\u{001B}[K\u{001B}[1A\r\u{001B}[K✓ Accessibility permission granted")
+    } else {
+        printDone("Accessibility permission granted")
+    }
+}
+
+func finishAccessibilityWaitBeforeMessage(_ replacingWait: Bool) {
+    if isatty(STDOUT_FILENO) == 1 && replacingWait {
+        print("")
+    }
+}
+
 enum EnkaCommand {
     case run
     case sources
@@ -436,11 +477,20 @@ func runAccessibilityStatusSubcommand(
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         process.arguments = ["-W", "-n", appBundlePath, "--args", "__accessibility-status", "--result-file", tempFile.path]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
 
         do {
             logToSetup?("\(logPrefix) [setup] accessibility-status command start: /usr/bin/open -W -n \(appBundlePath) --args __accessibility-status --result-file \(tempFile.path)")
             try process.run()
             process.waitUntilExit()
+            let stderrValue = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !stderrValue.isEmpty {
+                logToSetup?("\(logPrefix) [setup] accessibility-status stderr: \(stderrValue)")
+            }
             logToSetup?("\(logPrefix) [setup] accessibility-status command finished: exit=\(process.terminationStatus)")
             let rawValue = (try? String(contentsOf: tempFile))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             logToSetup?("\(logPrefix) [setup] accessibility-status result-file: \(tempFile.path), value=\(rawValue.isEmpty ? "(empty)" : rawValue)")
@@ -503,6 +553,7 @@ func waitForAccessibilityPermissionViaAppExecutable(
     executablePath: String,
     appBundlePath: String,
     timeoutSeconds: Int,
+    waitWasDisplayed: inout Bool,
     logToSetup: ((String) -> Void)? = nil
 ) -> Bool? {
     let target = max(0, timeoutSeconds)
@@ -527,7 +578,8 @@ func waitForAccessibilityPermissionViaAppExecutable(
     }
 
     if target > 0 {
-        print("Waiting for Accessibility permission...")
+        printAccessibilityWait()
+        waitWasDisplayed = true
     }
 
     for attempt in 1...target {
@@ -602,7 +654,6 @@ func runSetup(
     } else {
         do {
             try ensureDirectory(atPath: stateDir)
-            print("Setup log: \(setupLog)")
         } catch {
             writeStderr("error: failed to create state directory at \(stateDir): \(error.localizedDescription)\n")
             print("Setup log: (unable to create state directory)")
@@ -612,7 +663,9 @@ func runSetup(
         )
     }
 
-    printSetupSummary(plistPath: plistPath)
+    if dryRun {
+        printSetupSummary(plistPath: plistPath)
+    }
 
     let fm = FileManager.default
     let previousPlistExists = fm.fileExists(atPath: plistPath)
@@ -640,7 +693,9 @@ func runSetup(
         logToSetup("\(setupLogPrefix()) [setup] wrote plist: \(plistPath)")
     }
 
-    print("Plist:  \(plistResult): \(plistPath)")
+    if dryRun {
+        print("Plist:  \(plistResult): \(plistPath)")
+    }
 
     if dryRun {
         print("No files will be written, no apps opened, no launchctl commands run.")
@@ -675,6 +730,7 @@ func runSetup(
     )
     var permissionGranted = permissionGrantedByApp ?? false
     var proceedWithoutAppStatus = false
+    var displayedAccessibilityWait = false
 
     if permissionGrantedByApp == nil {
         if !dryRun {
@@ -703,7 +759,6 @@ func runSetup(
         }
 
         if !noOpen {
-            print("Opening \(installedAppPath()) ...")
             do {
                 try runOpenEnkaApp(logToSetup: dryRun ? nil : logToSetup)
             } catch {
@@ -720,6 +775,7 @@ func runSetup(
             executablePath: appExecutablePath,
             appBundlePath: appBundlePath,
             timeoutSeconds: waitAccessibilitySeconds,
+            waitWasDisplayed: &displayedAccessibilityWait,
             logToSetup: dryRun ? nil : logToSetup
         ) {
             permissionGranted = appStatus
@@ -735,6 +791,7 @@ func runSetup(
         if !dryRun {
             logToSetup("\(setupLogPrefix()) [setup] no start/restart due to app status unavailable")
         }
+        finishAccessibilityWaitBeforeMessage(displayedAccessibilityWait)
         print("Could not verify Accessibility status from app executable while waiting.")
         print("Please run:")
         print("  open \(installedAppPath())")
@@ -749,6 +806,7 @@ func runSetup(
                 "\(setupLogPrefix()) [setup] skipping start/restart: permission not granted within timeout=\(waitAccessibilitySeconds)"
             )
         }
+        finishAccessibilityWaitBeforeMessage(displayedAccessibilityWait)
         print("Accessibility permission was not granted within \(waitAccessibilitySeconds) seconds.")
         print("Please run:")
         print("  open \(installedAppPath())")
@@ -761,18 +819,18 @@ func runSetup(
         if !dryRun {
             logToSetup("\(setupLogPrefix()) [setup] no start/restart: --no-start was specified")
         }
-        print("Permission granted.")
+        printAccessibilityDone(replacingWait: displayedAccessibilityWait)
         print("Skipping launchctl because --no-start was specified.")
         print("Run:")
         print("  enka restart")
         return
     }
 
-    print("Accessibility permission granted.")
+    printAccessibilityDone(replacingWait: displayedAccessibilityWait)
     if !dryRun {
         logToSetup("\(setupLogPrefix()) [setup] proceeding to restart; launching launchctl restart sequence")
     }
-    runRestartCommands(plistPath: plistPath, dryRun: dryRun)
+    runRestartCommands(plistPath: plistPath, dryRun: dryRun, logToSetup: dryRun ? nil : logToSetup)
 }
 
 func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
@@ -1072,15 +1130,19 @@ func runProcess(_ executable: String, _ args: [String]) throws -> Int32 {
     return process.terminationStatus
 }
 
-func runLaunchctl(args: [String], dryRun: Bool, context: String) -> Int32 {
-    print("launchctl \(args.joined(separator: " "))")
+func runLaunchctl(args: [String], dryRun: Bool, context: String, quiet: Bool = false) -> Int32 {
+    if !quiet {
+        print("launchctl \(args.joined(separator: " "))")
+    }
     if dryRun {
         return 0
     }
 
     do {
         let status = try runProcess("/bin/launchctl", args)
-        if status == 0 {
+        if quiet {
+            return status
+        } else if status == 0 {
             print("succeeded: \(context)")
         } else {
             print("warning: \(context) failed with status \(status)")
@@ -1092,34 +1154,47 @@ func runLaunchctl(args: [String], dryRun: Bool, context: String) -> Int32 {
     }
 }
 
-func runRestartCommands(plistPath: String, dryRun: Bool) {
+func runRestartCommands(plistPath: String, dryRun: Bool, logToSetup: ((String) -> Void)? = nil) {
     let uid = getuid()
     let bootoutArgs = ["bootout", "gui/\(uid)", plistPath]
     let bootstrapArgs = ["bootstrap", "gui/\(uid)", plistPath]
     let kickstartArgs = ["kickstart", "-k", "gui/\(uid)/dev.ultrahope.enka"]
 
-    print("UID: \(uid)")
-    print("Planned commands:")
-    print("launchctl \(bootoutArgs.joined(separator: " "))")
-    print("launchctl \(bootstrapArgs.joined(separator: " "))")
-    print("launchctl \(kickstartArgs.joined(separator: " "))")
+    if dryRun {
+        print("UID: \(uid)")
+        print("Planned commands:")
+        print("launchctl \(bootoutArgs.joined(separator: " "))")
+        print("launchctl \(bootstrapArgs.joined(separator: " "))")
+        print("launchctl \(kickstartArgs.joined(separator: " "))")
+    } else {
+        logToSetup?("\(setupLogPrefix()) [setup] launchctl bootout: launchctl \(bootoutArgs.joined(separator: " "))")
+        logToSetup?("\(setupLogPrefix()) [setup] launchctl bootstrap: launchctl \(bootstrapArgs.joined(separator: " "))")
+        logToSetup?("\(setupLogPrefix()) [setup] launchctl kickstart: launchctl \(kickstartArgs.joined(separator: " "))")
+        printStep("Registering LaunchAgent")
+    }
 
     if dryRun {
         print("No launchctl commands were run.")
         return
     }
 
-    if runLaunchctl(args: bootoutArgs, dryRun: false, context: "bootout") != 0 {
-        print("warning: launchctl bootout failed, continuing restart.")
+    let bootoutStatus = runLaunchctl(args: bootoutArgs, dryRun: false, context: "bootout", quiet: true)
+    if bootoutStatus != 0 {
+        logToSetup?("\(setupLogPrefix()) [setup] launchctl bootout failed status=\(bootoutStatus); continuing restart")
     }
-    if runLaunchctl(args: bootstrapArgs, dryRun: false, context: "bootstrap") != 0 {
+    let bootstrapStatus = runLaunchctl(args: bootstrapArgs, dryRun: false, context: "bootstrap", quiet: true)
+    if bootstrapStatus != 0 {
+        logToSetup?("\(setupLogPrefix()) [setup] launchctl bootstrap failed status=\(bootstrapStatus)")
         writeStderr("error: launchctl bootstrap failed.\n")
         exit(1)
     }
-    if runLaunchctl(args: kickstartArgs, dryRun: false, context: "kickstart") != 0 {
+    let kickstartStatus = runLaunchctl(args: kickstartArgs, dryRun: false, context: "kickstart", quiet: true)
+    if kickstartStatus != 0 {
+        logToSetup?("\(setupLogPrefix()) [setup] launchctl kickstart failed status=\(kickstartStatus)")
         writeStderr("error: launchctl kickstart failed.\n")
         exit(1)
     }
+    printDone("LaunchAgent registered")
 }
 
 func runStopCommands(plistPath: String, dryRun: Bool) {
