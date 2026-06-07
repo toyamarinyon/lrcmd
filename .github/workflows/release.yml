@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version without the leading v, for example 0.1.0
+        description: Release version without the leading v, for example 0.1.1
         required: true
-        default: 0.1.0
+        default: 0.1.1
       prerelease:
         description: Mark the GitHub Release as a prerelease
         required: true
@@ -36,7 +36,7 @@ jobs:
               exit 1
               ;;
             *[!0-9.]* | "" | *..* | .* | *.)
-              echo "version must be a dotted numeric version like 0.1.0: $ENKA_VERSION" >&2
+              echo "version must be a dotted numeric version like 0.1.1: $ENKA_VERSION" >&2
               exit 1
               ;;
           esac
