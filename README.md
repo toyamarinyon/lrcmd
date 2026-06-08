@@ -33,7 +33,7 @@ Accessibility permission cannot be granted automatically by the installer.
 Environment overrides:
 
 ```bash
-ENKA_VERSION=0.1.1 \
+ENKA_VERSION=0.1.2 \
 ENKA_INSTALL_ROOT="$HOME/Applications/enka" \
 ENKA_INSTALL_ORIGIN="https://enka.ultrahope.dev" \
 ENKA_RELEASE_BASE_URL="https://github.com/toyamarinyon/enka/releases/download" \
@@ -136,7 +136,14 @@ Recommended:
 enka uninstall
 ```
 
+With `--yes`, `enka` stops the LaunchAgent and removes the LaunchAgent plist and installed files without prompting.
 With `--dry-run`, `enka` reports what would be removed without deleting files or running `launchctl`.
+
+macOS manages Accessibility permission separately. After uninstalling, open Accessibility settings, select `Enka`, then click the minus button below the app list:
+
+```text
+System Settings > Privacy & Security > Accessibility
+```
 
 Manual cleanup:
 
@@ -156,7 +163,7 @@ sh scripts/package-release.sh
 Distribution shape:
 
 ```text
-enka-v0.1.1-macos-arm64.tar.gz
+enka-v0.1.2-macos-arm64.tar.gz
   Enka.app/
   bin/enka
   README.md
@@ -168,7 +175,7 @@ enka-v0.1.1-macos-arm64.tar.gz
 Customize version/output:
 
 ```bash
-ENKA_VERSION=0.1.1 \
+ENKA_VERSION=0.1.2 \
 ENKA_DIST_DIR=/tmp/enka-dist \
 sh scripts/package-release.sh
 ```
@@ -183,9 +190,9 @@ sh scripts/verify-release.sh
 Publish a GitHub Release:
 
 1. Open the `Release` workflow in GitHub Actions.
-2. Run it manually with a version such as `0.1.1` (without the leading `v`).
+2. Run it manually with a version such as `0.1.2` (without the leading `v`).
 3. The workflow builds and verifies the archive on macOS, then publishes
-   `v0.1.1` with the `.tar.gz` archive and matching `.sha256` file.
+   `v0.1.2` with the `.tar.gz` archive and matching `.sha256` file.
 
 GitHub Pages installer site:
 

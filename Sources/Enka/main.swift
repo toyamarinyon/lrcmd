@@ -1242,30 +1242,34 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
     let installRoot = defaultInstallRoot()
     let hasPlist = fm.fileExists(atPath: plistPath)
 
-    print("UID: \(uid)")
-    print("Planned command:")
-    print("launchctl bootout gui/\(uid) \(plistPath)")
-    if !hasPlist {
-        print("Skipping launchctl because plist is missing.")
-    }
-    print("Targets:")
-    print("  LaunchAgent plist: \(plistPath)")
-    print("  Installed bins:   \(installRoot)")
-
-    if autoApprove {
-        print("--yes keeps installed binaries; remove them interactively if needed.")
+    if dryRun {
+        print("Uninstall plan:")
+        print("  LaunchAgent: \(plistPath)")
+        print("  Install root: \(installRoot)")
+        print("  launchctl bootout gui/\(uid) \(plistPath)")
+        print("No files will be removed and no launchctl commands will run.")
     }
 
     var plistResult = fm.fileExists(atPath: plistPath) ? "Kept" : "Missing"
     var binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
 
-    let removePlist = autoApprove ? true : confirm("Remove LaunchAgent plist? [y/N]")
-    let removeBinaries = !autoApprove && confirm("Remove installed binaries? [y/N]")
+    let shouldUninstall = autoApprove || dryRun || confirm("Uninstall Enka and remove installed files? [y/N]")
+    if !shouldUninstall {
+        print("Uninstall cancelled.")
+        return
+    }
+
+    let removePlist = true
+    let removeBinaries = true
     let shouldRemoveAnyFiles = removePlist || removeBinaries
 
     if hasPlist && shouldRemoveAnyFiles && !dryRun {
-        if runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout") != 0 {
-            print("warning: launchctl bootout failed, continuing uninstall.")
+        printStep("Stopping LaunchAgent")
+        let status = runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout", quiet: true)
+        if status == 0 {
+            printDone("LaunchAgent stopped")
+        } else {
+            printDone("LaunchAgent was not running")
         }
     }
 
@@ -1275,7 +1279,9 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
                 if dryRun {
                     plistResult = "Would remove"
                 } else {
+                    printStep("Removing LaunchAgent plist")
                     try fm.removeItem(atPath: plistPath)
+                    printDone("Removed LaunchAgent plist")
                     plistResult = "Removed"
                 }
             } catch {
@@ -1284,22 +1290,19 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
             }
         } else {
             plistResult = "Missing"
-            print("Missing: \(plistPath)")
         }
-    } else {
-        plistResult = "Kept"
     }
 
-    if autoApprove {
-        binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
-    } else if removeBinaries {
+    if removeBinaries {
         if fm.fileExists(atPath: installRoot) {
             if isSafeInstallRootPath(installRoot) {
                 do {
                     if dryRun {
                         binariesResult = "Would remove"
                     } else {
+                        printStep("Removing installed files")
                         try fm.removeItem(atPath: installRoot)
+                        printDone("Removed installed files")
                         binariesResult = "Removed"
                     }
                 } catch {
@@ -1308,19 +1311,26 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
                 }
             } else {
                 binariesResult = "Kept"
-                print("Not removing: \(installRoot) (path is too broad or unsafe)")
+                print("Install root was kept because the path is too broad or unsafe:")
+                print("  \(installRoot)")
             }
         } else {
             binariesResult = "Missing"
-            print("Missing: \(installRoot)")
         }
     }
 
-    print("LaunchAgent plist: \(plistResult)")
-    print("Installed bins:   \(binariesResult)")
     if dryRun {
-        print("No launchctl commands were run.")
+        print("")
+        print("LaunchAgent plist: \(plistResult)")
+        print("Installed files:   \(binariesResult)")
+        return
     }
+
+    print("")
+    print("✓ Uninstall complete")
+    print("  Accessibility permission is managed by macOS and may remain listed.")
+    print("  To remove it manually, open Accessibility settings, select Enka,")
+    print("  then click the minus button below the app list.")
 }
 
 func checkAccessibilityPermission() -> Bool {
