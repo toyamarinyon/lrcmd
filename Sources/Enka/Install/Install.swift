@@ -180,15 +180,13 @@ func runInstall(
             return
         }
 
-        if !noOpen {
-            do {
-                try runOpenEnkaApp(logToSetup: logToSetup)
-            } catch {
-                print("warning: failed to run open: \(error.localizedDescription)")
-                print("Please run manually:")
-                print("  open \(installedAppPath())")
-                logToSetup("\(setupLogPrefix()) [setup] open command failed; cannot wait for permission")
-            }
+        do {
+            try runOpenEnkaApp(logToSetup: logToSetup)
+        } catch {
+            print("warning: failed to run open: \(error.localizedDescription)")
+            print("Please run manually:")
+            print("  open \(installedAppPath())")
+            logToSetup("\(setupLogPrefix()) [setup] open command failed; cannot wait for permission")
         }
 
         if let appStatus = waitForAccessibilityPermissionViaAppExecutable(

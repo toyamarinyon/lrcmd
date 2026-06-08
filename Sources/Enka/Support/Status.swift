@@ -2,6 +2,7 @@ import Foundation
 
 func printStatus() {
     let fm = FileManager.default
+    let plistPath = launchAgentPlistPath()
     let target = launchctlServiceTarget()
     let accessible = checkAccessibilityPermission()
     let appPath = installedAppPath()
@@ -10,7 +11,7 @@ func printStatus() {
     let errorLogPath = standardErrorLogPath()
     let stateDir = stateDirectoryPath()
 
-    print("LaunchAgent:  \(launchAgentPlistPath()) (\(fm.fileExists(atPath: launchAgentPlistPath()) ? "exists" : "missing"))")
+    print("LaunchAgent:  \(plistPath) (\(fm.fileExists(atPath: plistPath) ? "exists" : "missing"))")
     print("App:          \(appPath) (\(fm.fileExists(atPath: appPath) ? "exists" : "missing"))")
     print("App binary:   \(appExecutablePath) (\(fm.fileExists(atPath: appExecutablePath) ? "exists" : "missing"))")
     print("Binary:       \(installedBinaryPath()) (\(fm.fileExists(atPath: installedBinaryPath()) ? "exists" : "missing"))")
@@ -23,7 +24,7 @@ func printStatus() {
     print("Check commands:")
     print("  launchctl print \(target)")
 
-    if !fm.fileExists(atPath: launchAgentPlistPath()) {
+    if !fm.fileExists(atPath: plistPath) {
         print("LaunchAgent plist missing; run the installer again.")
         return
     }

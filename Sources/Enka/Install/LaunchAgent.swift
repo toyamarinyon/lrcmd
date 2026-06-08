@@ -1,6 +1,35 @@
 import Foundation
 import Darwin
 
+func launchAgentPlist() -> String {
+    let programPath = installedAppExecutablePath()
+    let logPath = standardOutputLogPath()
+    let errPath = standardErrorLogPath()
+
+    let plist: [String: Any] = [
+        "Label": launchctlLabel(),
+        "ProgramArguments": [programPath, "run"],
+        "RunAtLoad": true,
+        "KeepAlive": true,
+        "StandardOutPath": logPath,
+        "StandardErrorPath": errPath,
+    ]
+
+    do {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+        guard let content = String(data: data, encoding: .utf8) else {
+            fatalError("failed to encode launch agent plist as UTF-8")
+        }
+        return content
+    } catch {
+        fatalError("failed to serialize launch agent plist: \(error.localizedDescription)")
+    }
+}
+
 func runRestartCommands(plistPath: String, logToSetup: ((String) -> Void)? = nil) {
     let uid = getuid()
     let bootoutArgs = ["bootout", "gui/\(uid)", plistPath]
