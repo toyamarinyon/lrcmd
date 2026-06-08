@@ -8,7 +8,7 @@ The product is intentionally not a general command launcher. The daemon keeps th
 
 - **Focused:** switch macOS input sources, avoid general launcher behavior.
 - **Fast:** keep the tap path minimal; post the toggle key directly on Command release.
-- **Inspectable:** setup, status, and release scripts should show exactly what they touch.
+- **Inspectable:** install, status, and release scripts should show exactly what they touch.
 - **Reversible:** uninstall and reset paths should remove only owned `enka` artifacts.
 - **Respectful of macOS permissions:** use an app bundle identity and standard Accessibility prompts.
 
@@ -16,7 +16,6 @@ The product is intentionally not a general command launcher. The daemon keeps th
 
 - Rename the tool from `lrcmd` to `enka`.
 - Ship one CLI binary, `enka`, plus `Enka.app` for Accessibility identity.
-- Remove the separate `inctl` helper binary by folding input source operations into `enka sources/current/select`.
 - Do not expose tap source configuration; the daemon posts fixed JIS Eisuu/Kana keycodes directly.
 
 ## Owned Artifacts
@@ -31,7 +30,6 @@ The product is intentionally not a general command launcher. The daemon keeps th
 ## Near-Term Backlog
 
 - Finish the `enka` breaking rename across Swift code, scripts, docs, and release verification.
-- Verify `enka sources/current/select` on a real macOS session.
-- Verify setup dry-run does not create LaunchAgent directories.
+- Verify install with temporary install, LaunchAgent, and state directories.
 - Verify release packaging contains only `bin/enka`, `Enka.app`, README, and optional LICENSE.
 - Document Background Activity behavior if reboot/startup issues reappear.

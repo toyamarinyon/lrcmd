@@ -1,5 +1,4 @@
 @preconcurrency import ApplicationServices
-import Carbon
 import CoreGraphics
 import Foundation
 import Darwin
@@ -7,7 +6,6 @@ import Darwin
 enum EnkaError: Error, CustomStringConvertible {
     case invalidArguments
     case accessibilityPermissionRequired
-    case inputSourceReadFailed(String)
     case eventTapCreationFailed
     case runLoopSourceCreationFailed
 
@@ -17,8 +15,6 @@ enum EnkaError: Error, CustomStringConvertible {
             return "invalid arguments"
         case .accessibilityPermissionRequired:
             return "Accessibility permission is required. Enable it in System Settings > Privacy & Security > Accessibility."
-        case let .inputSourceReadFailed(reason):
-            return "Failed to read input source: \(reason)"
         case .eventTapCreationFailed:
             return "Failed to create keyboard event tap. Check Accessibility permission."
         case .runLoopSourceCreationFailed:
@@ -155,15 +151,11 @@ func usage(progname: String) -> String {
     """
     Usage:
       \(progname) [run]
-      \(progname) sources
-      \(progname) current
-      \(progname) select <id>
-      \(progname) status [--dry-run]
-      \(progname) doctor
-      \(progname) setup [--yes] [--dry-run] [--no-open] [--no-start] [--wait-accessibility <seconds>]
-      \(progname) uninstall [--yes] [--dry-run]
-      \(progname) restart [--dry-run]
-      \(progname) stop [--dry-run]
+      \(progname) install [--no-open] [--no-start] [--wait-accessibility <seconds>]
+      \(progname) status
+      \(progname) uninstall
+      \(progname) restart
+      \(progname) stop
     """
 }
 
@@ -222,22 +214,16 @@ func finishAccessibilityWaitBeforeMessage(_ replacingWait: Bool) {
 
 enum EnkaCommand {
     case run
-    case sources
-    case currentSource
-    case select(String)
-    case status(dryRun: Bool)
-    case doctor
+    case status
     case accessibilityStatus(resultFile: String?)
     case setup(
-        autoApprove: Bool,
-        dryRun: Bool,
         noOpen: Bool,
         noStart: Bool,
         waitAccessibilitySeconds: Int
     )
-    case uninstall(autoApprove: Bool, dryRun: Bool)
-    case restart(dryRun: Bool)
-    case stop(dryRun: Bool)
+    case uninstall
+    case restart
+    case stop
 }
 
 func envOverride(_ name: String) -> String? {
@@ -260,7 +246,7 @@ func defaultLaunchAgentDirectory() -> String {
 }
 
 func stateDirectoryPath() -> String {
-    userHomeDirectory().appending("/.local/state/enka")
+    envOverride("ENKA_STATE_DIR") ?? userHomeDirectory().appending("/.local/state/enka")
 }
 
 func standardOutputLogPath() -> String {
@@ -352,64 +338,6 @@ func launchAgentPlist() -> String {
         return content
     } catch {
         fatalError("failed to serialize launch agent plist: \(error.localizedDescription)")
-    }
-}
-
-struct InputSource {
-    let source: TISInputSource
-    let id: String
-    let name: String
-}
-
-func inputSourceProperty(_ source: TISInputSource, key: CFString) -> String? {
-    guard let rawValue = TISGetInputSourceProperty(source, key) else {
-        return nil
-    }
-
-    let unmanaged = Unmanaged<CFTypeRef>.fromOpaque(rawValue)
-    let value = unmanaged.takeUnretainedValue()
-    return value as? String
-}
-
-func availableInputSources() throws -> [InputSource] {
-    let sourceList = TISCreateInputSourceList(nil, false).takeRetainedValue()
-    guard let sources = sourceList as? [TISInputSource] else {
-        return []
-    }
-
-    return sources.compactMap { source in
-        guard
-            let id = inputSourceProperty(source, key: kTISPropertyInputSourceID),
-            let name = inputSourceProperty(source, key: kTISPropertyLocalizedName)
-        else {
-            return nil
-        }
-        return InputSource(source: source, id: id, name: name)
-    }
-}
-
-func currentInputSource() throws -> InputSource {
-    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
-        throw EnkaError.inputSourceReadFailed("current keyboard input source is unavailable")
-    }
-    guard
-        let id = inputSourceProperty(source, key: kTISPropertyInputSourceID),
-        let name = inputSourceProperty(source, key: kTISPropertyLocalizedName)
-    else {
-        throw EnkaError.inputSourceReadFailed("current keyboard input source is missing id or name")
-    }
-    return InputSource(source: source, id: id, name: name)
-}
-
-func selectInputSource(_ id: String) -> Bool {
-    do {
-        let sources = try availableInputSources()
-        guard let target = sources.first(where: { $0.id == id }) else {
-            return false
-        }
-        return TISSelectInputSource(target.source) == noErr
-    } catch {
-        return false
     }
 }
 
@@ -635,8 +563,6 @@ func waitForAccessibilityPermission(timeoutSeconds: Int) -> Bool {
 }
 
 func runSetup(
-    autoApprove: Bool,
-    dryRun: Bool,
     noOpen: Bool,
     noStart: Bool,
     waitAccessibilitySeconds: Int
@@ -649,93 +575,45 @@ func runSetup(
         writeSetupLog(setupLog, message)
     }
 
-    if dryRun {
-        print("Setup log: (dry-run; not written)")
-    } else {
-        do {
-            try ensureDirectory(atPath: stateDir)
-        } catch {
-            writeStderr("error: failed to create state directory at \(stateDir): \(error.localizedDescription)\n")
-            print("Setup log: (unable to create state directory)")
-        }
-        logToSetup(
-            "\(setupLogPrefix()) [setup] start plistPath=\(plistPath) appPath=\(installedAppPath()) appExecutablePath=\(installedAppExecutablePath()) dryRun=\(dryRun) noOpen=\(noOpen) noStart=\(noStart) waitAccessibilitySeconds=\(waitAccessibilitySeconds)"
-        )
+    do {
+        try ensureDirectory(atPath: stateDir)
+    } catch {
+        writeStderr("error: failed to create state directory at \(stateDir): \(error.localizedDescription)\n")
+        print("Setup log: (unable to create state directory)")
     }
-
-    if dryRun {
-        printSetupSummary(plistPath: plistPath)
-    }
+    logToSetup(
+        "\(setupLogPrefix()) [setup] start plistPath=\(plistPath) appPath=\(installedAppPath()) appExecutablePath=\(installedAppExecutablePath()) noOpen=\(noOpen) noStart=\(noStart) waitAccessibilitySeconds=\(waitAccessibilitySeconds)"
+    )
 
     let fm = FileManager.default
     let previousPlistExists = fm.fileExists(atPath: plistPath)
-    var plistResult = "Kept"
 
-    if dryRun {
-        print("Running setup in dry-run mode. No files will be written.")
+    do {
+        try ensureDirectory(atPath: plistDir)
+        try ensureDirectory(atPath: stateDir)
+        let plistContent = launchAgentPlist()
+        try plistContent.write(toFile: plistPath, atomically: true, encoding: .utf8)
+    } catch {
+        writeStderr("error: failed to write launch agent plist at \(plistPath): \(error.localizedDescription)\n")
+        exit(1)
     }
-
-    if dryRun {
-        print("Planned file write: \(plistPath)")
-        print("  new LaunchAgent plist content")
-        plistResult = previousPlistExists ? "Updated (would overwrite)" : "Created"
-    } else {
-        do {
-            try ensureDirectory(atPath: plistDir)
-            try ensureDirectory(atPath: stateDir)
-            let plistContent = launchAgentPlist()
-            try plistContent.write(toFile: plistPath, atomically: true, encoding: .utf8)
-            plistResult = previousPlistExists ? "Updated (overwritten)" : "Created"
-        } catch {
-            writeStderr("error: failed to write launch agent plist at \(plistPath): \(error.localizedDescription)\n")
-            exit(1)
-        }
-        logToSetup("\(setupLogPrefix()) [setup] wrote plist: \(plistPath)")
-    }
-
-    if dryRun {
-        print("Plist:  \(plistResult): \(plistPath)")
-    }
-
-    if dryRun {
-        print("No files will be written, no apps opened, no launchctl commands run.")
-        print("Planned open: \(noOpen ? "(skipped) manual command shown below" : installedAppPath())")
-        print("Planned wait for Accessibility: \(waitAccessibilitySeconds) seconds")
-        print("Planned launchctl restart: \(noStart ? "skip" : "run")")
-
-        var nextRunCommands: [String] = []
-        if !noOpen {
-            nextRunCommands.append("open \(installedAppPath())")
-        }
-        if !noStart {
-            nextRunCommands.append("enka restart")
-        }
-        if !nextRunCommands.isEmpty {
-            print("Next (actual run):")
-            for command in nextRunCommands {
-                print("  \(command)")
-            }
-        } else {
-            print("Next (actual run): none in dry-run.")
-        }
-        return
-    }
+    logToSetup("\(setupLogPrefix()) [setup] wrote plist: \(plistPath)")
+    printSetupSummary(plistPath: plistPath)
+    print("Plist:  \(previousPlistExists ? "Updated" : "Created"): \(plistPath)")
 
     let appExecutablePath = installedAppExecutablePath()
     let appBundlePath = installedAppPath()
     let permissionGrantedByApp = runAccessibilityStatusSubcommand(
         executablePath: appExecutablePath,
         appBundlePath: appBundlePath,
-        logToSetup: dryRun ? nil : logToSetup
+        logToSetup: logToSetup
     )
     var permissionGranted = permissionGrantedByApp ?? false
     var proceedWithoutAppStatus = false
     var displayedAccessibilityWait = false
 
     if permissionGrantedByApp == nil {
-        if !dryRun {
-            logToSetup("\(setupLogPrefix()) [setup] skipping start/restart: app status unavailable before open")
-        }
+        logToSetup("\(setupLogPrefix()) [setup] skipping start/restart: app status unavailable before open")
         print("Could not verify Accessibility status from app executable.")
         print("Please run:")
         print("  open \(installedAppPath())")
@@ -750,24 +628,20 @@ func runSetup(
             print("Manual open command: open \(installedAppPath())")
             print("Please grant Accessibility and then run:")
             print("  enka restart")
-            if !dryRun {
-                logToSetup(
-                    "\(setupLogPrefix()) [setup] skipping start/restart: noOpen and app permission missing"
-                )
-            }
+            logToSetup(
+                "\(setupLogPrefix()) [setup] skipping start/restart: noOpen and app permission missing"
+            )
             return
         }
 
         if !noOpen {
             do {
-                try runOpenEnkaApp(logToSetup: dryRun ? nil : logToSetup)
+                try runOpenEnkaApp(logToSetup: logToSetup)
             } catch {
                 print("warning: failed to run open: \(error.localizedDescription)")
                 print("Please run manually:")
                 print("  open \(installedAppPath())")
-                if !dryRun {
-                    logToSetup("\(setupLogPrefix()) [setup] open command failed; cannot wait for permission")
-                }
+                logToSetup("\(setupLogPrefix()) [setup] open command failed; cannot wait for permission")
             }
         }
 
@@ -776,21 +650,17 @@ func runSetup(
             appBundlePath: appBundlePath,
             timeoutSeconds: waitAccessibilitySeconds,
             waitWasDisplayed: &displayedAccessibilityWait,
-            logToSetup: dryRun ? nil : logToSetup
+            logToSetup: logToSetup
         ) {
             permissionGranted = appStatus
         } else {
-            if !dryRun {
-                logToSetup("\(setupLogPrefix()) [setup] skipping start/restart: app status unavailable during wait")
-            }
+            logToSetup("\(setupLogPrefix()) [setup] skipping start/restart: app status unavailable during wait")
             proceedWithoutAppStatus = true
         }
     }
 
     if proceedWithoutAppStatus {
-        if !dryRun {
-            logToSetup("\(setupLogPrefix()) [setup] no start/restart due to app status unavailable")
-        }
+        logToSetup("\(setupLogPrefix()) [setup] no start/restart due to app status unavailable")
         finishAccessibilityWaitBeforeMessage(displayedAccessibilityWait)
         print("Could not verify Accessibility status from app executable while waiting.")
         print("Please run:")
@@ -801,11 +671,9 @@ func runSetup(
     }
 
     if !permissionGranted {
-        if !dryRun {
-            logToSetup(
-                "\(setupLogPrefix()) [setup] skipping start/restart: permission not granted within timeout=\(waitAccessibilitySeconds)"
-            )
-        }
+        logToSetup(
+            "\(setupLogPrefix()) [setup] skipping start/restart: permission not granted within timeout=\(waitAccessibilitySeconds)"
+        )
         finishAccessibilityWaitBeforeMessage(displayedAccessibilityWait)
         print("Accessibility permission was not granted within \(waitAccessibilitySeconds) seconds.")
         print("Please run:")
@@ -816,9 +684,7 @@ func runSetup(
     }
 
     if noStart {
-        if !dryRun {
-            logToSetup("\(setupLogPrefix()) [setup] no start/restart: --no-start was specified")
-        }
+        logToSetup("\(setupLogPrefix()) [setup] no start/restart: --no-start was specified")
         printAccessibilityDone(replacingWait: displayedAccessibilityWait)
         print("Skipping launchctl because --no-start was specified.")
         print("Run:")
@@ -827,10 +693,8 @@ func runSetup(
     }
 
     printAccessibilityDone(replacingWait: displayedAccessibilityWait)
-    if !dryRun {
-        logToSetup("\(setupLogPrefix()) [setup] proceeding to restart; launching launchctl restart sequence")
-    }
-    runRestartCommands(plistPath: plistPath, dryRun: dryRun, logToSetup: dryRun ? nil : logToSetup)
+    logToSetup("\(setupLogPrefix()) [setup] proceeding to restart; launching launchctl restart sequence")
+    runRestartCommands(plistPath: plistPath, logToSetup: logToSetup)
 }
 
 func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
@@ -850,23 +714,7 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
     }
 
     switch command {
-    case "sources":
-        guard args.count == 1 else { throw EnkaError.invalidArguments }
-        return .sources
-    case "current":
-        guard args.count == 1 else { throw EnkaError.invalidArguments }
-        return .currentSource
-    case "select":
-        guard args.count == 2 else { throw EnkaError.invalidArguments }
-        return .select(args[1])
-    default:
-        break
-    }
-
-    switch command {
-    case "setup":
-        var autoApprove = false
-        var dryRun = false
+    case "install":
         var noOpen = false
         var noStart = false
         var waitAccessibilitySeconds = 120
@@ -876,16 +724,6 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
         while index < args.count {
             let flag = args[index]
             switch flag {
-            case "--yes":
-                if autoApprove {
-                    throw EnkaError.invalidArguments
-                }
-                autoApprove = true
-            case "--dry-run":
-                if dryRun {
-                    throw EnkaError.invalidArguments
-                }
-                dryRun = true
             case "--no-open":
                 if noOpen {
                     throw EnkaError.invalidArguments
@@ -916,8 +754,6 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
         }
 
         return .setup(
-            autoApprove: autoApprove,
-            dryRun: dryRun,
             noOpen: noOpen,
             noStart: noStart,
             waitAccessibilitySeconds: waitAccessibilitySeconds
@@ -934,60 +770,23 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
         }
         return .accessibilityStatus(resultFile: args[2])
     case "uninstall":
-        if args.count == 1 {
-            return .uninstall(autoApprove: false, dryRun: false)
-        }
-
-        if args.count > 3 {
-            throw EnkaError.invalidArguments
-        }
-
-        var autoApprove = false
-        var dryRun = false
-        for flag in args.dropFirst() {
-            switch flag {
-            case "--yes":
-                autoApprove = true
-            case "--dry-run":
-                dryRun = true
-            default:
-                throw EnkaError.invalidArguments
-            }
-        }
-        return .uninstall(autoApprove: autoApprove, dryRun: dryRun)
-    case "status":
-        if args.count == 1 {
-            return .status(dryRun: false)
-        }
-        if args.count == 2 && args[1] == "--dry-run" {
-            return .status(dryRun: true)
-        }
-        throw EnkaError.invalidArguments
-    case "doctor":
         guard args.count == 1 else { throw EnkaError.invalidArguments }
-        return .doctor
+        return .uninstall
+    case "status":
+        guard args.count == 1 else { throw EnkaError.invalidArguments }
+        return .status
     case "restart":
-        if args.count == 1 {
-            return .restart(dryRun: false)
-        }
-        if args.count == 2 && args[1] == "--dry-run" {
-            return .restart(dryRun: true)
-        }
-        throw EnkaError.invalidArguments
+        guard args.count == 1 else { throw EnkaError.invalidArguments }
+        return .restart
     case "stop":
-        if args.count == 1 {
-            return .stop(dryRun: false)
-        }
-        if args.count == 2 && args[1] == "--dry-run" {
-            return .stop(dryRun: true)
-        }
-        throw EnkaError.invalidArguments
+        guard args.count == 1 else { throw EnkaError.invalidArguments }
+        return .stop
     default:
         throw EnkaError.invalidArguments
     }
 }
 
-func printStatus(dryRun: Bool) {
+func printStatus() {
     let fm = FileManager.default
     let target = launchctlServiceTarget()
     let accessible = checkAccessibilityPermission()
@@ -1009,13 +808,9 @@ func printStatus(dryRun: Bool) {
     }
     print("Check commands:")
     print("  launchctl print \(target)")
-    if dryRun {
-        print("No launchctl commands were run.")
-        return
-    }
 
     if !fm.fileExists(atPath: launchAgentPlistPath()) {
-        print("LaunchAgent plist missing; run enka setup first.")
+        print("LaunchAgent plist missing; run the installer again.")
         return
     }
 
@@ -1048,74 +843,6 @@ func printStatus(dryRun: Bool) {
     }
 }
 
-func printDoctor() {
-    let fm = FileManager.default
-    let plistPath = launchAgentPlistPath()
-    let appPath = installedAppPath()
-    let appExecutablePath = installedAppExecutablePath()
-    let appInfoPlistPath = installedAppInfoPlistPath()
-    let stateDir = stateDirectoryPath()
-    let stdoutLogPath = standardOutputLogPath()
-    let stderrLogPath = standardErrorLogPath()
-    let setupLog = setupLogPath()
-
-    print("status")
-    printStatus(dryRun: true)
-
-    if fm.fileExists(atPath: plistPath) {
-        do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: plistPath))
-            var format = PropertyListSerialization.PropertyListFormat.xml
-            _ = try PropertyListSerialization.propertyList(from: data, options: [], format: &format)
-            if format == .xml {
-                print("plist decode: ok")
-            } else {
-                print("plist decode: invalid (not XML)")
-            }
-        } catch {
-            print("plist decode: invalid")
-        }
-    } else {
-        print("launchctl plist missing: next action: enka setup")
-    }
-
-    if !fm.fileExists(atPath: appPath) {
-        print("app bundle missing: \(appPath)")
-    }
-    if !fm.fileExists(atPath: appExecutablePath) {
-        print("app executable missing: \(appExecutablePath)")
-    } else if !FileManager.default.isExecutableFile(atPath: appExecutablePath) {
-        print("app executable not executable: \(appExecutablePath)")
-    }
-    if !fm.fileExists(atPath: appInfoPlistPath) {
-        print("app Info.plist missing: \(appInfoPlistPath)")
-    }
-
-    if !fm.fileExists(atPath: installedBinaryPath()) {
-        print("binary missing")
-        print("next action: enka setup")
-    }
-
-    if !fm.fileExists(atPath: stateDir) {
-        print("info: state directory is missing (\(stateDir)); typically created after setup or service run")
-    }
-    if !fm.fileExists(atPath: stdoutLogPath) {
-        print("info: stdout log missing (\(stdoutLogPath)); typically created after setup or service run")
-    }
-    if !fm.fileExists(atPath: stderrLogPath) {
-        print("info: stderr log missing (\(stderrLogPath)); typically created after setup or service run")
-    }
-    if !fm.fileExists(atPath: setupLog) {
-        print("info: setup log missing (\(setupLog)); typically created by setup (non-dry-run)")
-    }
-
-    if !checkAccessibilityPermission() {
-        print("accessibility: missing")
-        print("next action: open \(installedAppPath())")
-        print("and enable it in System Settings > Privacy & Security > Accessibility")
-    }
-}
-
 func runProcess(_ executable: String, _ args: [String]) throws -> Int32 {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -1130,12 +857,9 @@ func runProcess(_ executable: String, _ args: [String]) throws -> Int32 {
     return process.terminationStatus
 }
 
-func runLaunchctl(args: [String], dryRun: Bool, context: String, quiet: Bool = false) -> Int32 {
+func runLaunchctl(args: [String], context: String, quiet: Bool = false) -> Int32 {
     if !quiet {
         print("launchctl \(args.joined(separator: " "))")
-    }
-    if dryRun {
-        return 0
     }
 
     do {
@@ -1154,41 +878,28 @@ func runLaunchctl(args: [String], dryRun: Bool, context: String, quiet: Bool = f
     }
 }
 
-func runRestartCommands(plistPath: String, dryRun: Bool, logToSetup: ((String) -> Void)? = nil) {
+func runRestartCommands(plistPath: String, logToSetup: ((String) -> Void)? = nil) {
     let uid = getuid()
     let bootoutArgs = ["bootout", "gui/\(uid)", plistPath]
     let bootstrapArgs = ["bootstrap", "gui/\(uid)", plistPath]
     let kickstartArgs = ["kickstart", "-k", launchctlServiceTarget()]
 
-    if dryRun {
-        print("UID: \(uid)")
-        print("Planned commands:")
-        print("launchctl \(bootoutArgs.joined(separator: " "))")
-        print("launchctl \(bootstrapArgs.joined(separator: " "))")
-        print("launchctl \(kickstartArgs.joined(separator: " "))")
-    } else {
-        logToSetup?("\(setupLogPrefix()) [setup] launchctl bootout: launchctl \(bootoutArgs.joined(separator: " "))")
-        logToSetup?("\(setupLogPrefix()) [setup] launchctl bootstrap: launchctl \(bootstrapArgs.joined(separator: " "))")
-        logToSetup?("\(setupLogPrefix()) [setup] launchctl kickstart: launchctl \(kickstartArgs.joined(separator: " "))")
-        printStep("Registering LaunchAgent")
-    }
+    logToSetup?("\(setupLogPrefix()) [setup] launchctl bootout: launchctl \(bootoutArgs.joined(separator: " "))")
+    logToSetup?("\(setupLogPrefix()) [setup] launchctl bootstrap: launchctl \(bootstrapArgs.joined(separator: " "))")
+    logToSetup?("\(setupLogPrefix()) [setup] launchctl kickstart: launchctl \(kickstartArgs.joined(separator: " "))")
+    printStep("Registering LaunchAgent")
 
-    if dryRun {
-        print("No launchctl commands were run.")
-        return
-    }
-
-    let bootoutStatus = runLaunchctl(args: bootoutArgs, dryRun: false, context: "bootout", quiet: true)
+    let bootoutStatus = runLaunchctl(args: bootoutArgs, context: "bootout", quiet: true)
     if bootoutStatus != 0 {
         logToSetup?("\(setupLogPrefix()) [setup] launchctl bootout failed status=\(bootoutStatus); continuing restart")
     }
-    let bootstrapStatus = runLaunchctl(args: bootstrapArgs, dryRun: false, context: "bootstrap", quiet: true)
+    let bootstrapStatus = runLaunchctl(args: bootstrapArgs, context: "bootstrap", quiet: true)
     if bootstrapStatus != 0 {
         logToSetup?("\(setupLogPrefix()) [setup] launchctl bootstrap failed status=\(bootstrapStatus)")
         writeStderr("error: launchctl bootstrap failed.\n")
         exit(1)
     }
-    let kickstartStatus = runLaunchctl(args: kickstartArgs, dryRun: false, context: "kickstart", quiet: true)
+    let kickstartStatus = runLaunchctl(args: kickstartArgs, context: "kickstart", quiet: true)
     if kickstartStatus != 0 {
         logToSetup?("\(setupLogPrefix()) [setup] launchctl kickstart failed status=\(kickstartStatus)")
         writeStderr("error: launchctl kickstart failed.\n")
@@ -1197,20 +908,14 @@ func runRestartCommands(plistPath: String, dryRun: Bool, logToSetup: ((String) -
     printDone("LaunchAgent registered")
 }
 
-func runStopCommands(plistPath: String, dryRun: Bool) {
+func runStopCommands(plistPath: String) {
     let uid = getuid()
     let args = ["bootout", "gui/\(uid)", plistPath]
 
     print("UID: \(uid)")
-    print("Planned command:")
     print("launchctl \(args.joined(separator: " "))")
 
-    if dryRun {
-        print("No launchctl commands were run.")
-        return
-    }
-
-    if runLaunchctl(args: args, dryRun: false, context: "bootout") != 0 {
+    if runLaunchctl(args: args, context: "bootout") != 0 {
         writeStderr("error: launchctl bootout failed.\n")
         exit(1)
     }
@@ -1235,33 +940,22 @@ func isSafeInstallRootPath(_ path: String) -> Bool {
     return true
 }
 
-func runUninstall(autoApprove: Bool, dryRun: Bool) {
+func runUninstall() {
     let fm = FileManager.default
     let uid = getuid()
     let plistPath = launchAgentPlistPath()
     let installRoot = defaultInstallRoot()
     let hasPlist = fm.fileExists(atPath: plistPath)
 
-    if dryRun {
-        print("Uninstall plan:")
-        print("  LaunchAgent: \(plistPath)")
-        print("  Install root: \(installRoot)")
-        print("  launchctl bootout gui/\(uid) \(plistPath)")
-        print("No files will be removed and no launchctl commands will run.")
-    }
-
-    var plistResult = fm.fileExists(atPath: plistPath) ? "Kept" : "Missing"
-    var binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
-
-    let shouldUninstall = autoApprove || dryRun || confirm("Uninstall Enka and remove installed files? [y/N]")
+    let shouldUninstall = confirm("Uninstall Enka and remove installed files? [y/N]")
     if !shouldUninstall {
         print("Uninstall cancelled.")
         return
     }
 
-    if hasPlist && !dryRun {
+    if hasPlist {
         printStep("Stopping LaunchAgent")
-        let status = runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout", quiet: true)
+        let status = runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], context: "bootout", quiet: true)
         if status == 0 {
             printDone("LaunchAgent stopped")
         } else {
@@ -1271,51 +965,29 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
 
     if fm.fileExists(atPath: plistPath) {
         do {
-            if dryRun {
-                plistResult = "Would remove"
-            } else {
-                printStep("Removing LaunchAgent plist")
-                try fm.removeItem(atPath: plistPath)
-                printDone("Removed LaunchAgent plist")
-                plistResult = "Removed"
-            }
+            printStep("Removing LaunchAgent plist")
+            try fm.removeItem(atPath: plistPath)
+            printDone("Removed LaunchAgent plist")
         } catch {
             writeStderr("error: failed to remove plist at \(plistPath): \(error.localizedDescription)\n")
             exit(1)
         }
-    } else {
-        plistResult = "Missing"
     }
 
     if fm.fileExists(atPath: installRoot) {
         if isSafeInstallRootPath(installRoot) {
             do {
-                if dryRun {
-                    binariesResult = "Would remove"
-                } else {
-                    printStep("Removing installed files")
-                    try fm.removeItem(atPath: installRoot)
-                    printDone("Removed installed files")
-                    binariesResult = "Removed"
-                }
+                printStep("Removing installed files")
+                try fm.removeItem(atPath: installRoot)
+                printDone("Removed installed files")
             } catch {
                 writeStderr("error: failed to remove installed binaries at \(installRoot): \(error.localizedDescription)\n")
                 exit(1)
             }
         } else {
-            binariesResult = "Kept"
             print("Install root was kept because the path is too broad or unsafe:")
             print("  \(installRoot)")
         }
-    } else {
-        binariesResult = "Missing"
-    }
-
-    if dryRun {
-        print("")
-        print("LaunchAgent plist: \(plistResult)")
-        print("Installed files:   \(binariesResult)")
-        return
     }
 
     print("")
@@ -1446,56 +1118,30 @@ do {
             }
         }
         exit(isGranted ? 0 : 1)
-    case .sources:
-        do {
-            for source in try availableInputSources() {
-                print("\(source.id)\t\(source.name)")
-            }
-        } catch {
-            writeStderr("error: failed to list input sources: \(error.localizedDescription)\n")
-            exit(1)
-        }
-    case .currentSource:
-        do {
-            let source = try currentInputSource()
-            print("\(source.id)\t\(source.name)")
-        } catch {
-            writeStderr("error: failed to read current input source: \(error.localizedDescription)\n")
-            exit(1)
-        }
-    case let .select(sourceId):
-        if !selectInputSource(sourceId) {
-            writeStderr("error: failed to select input source '\(sourceId)'\n")
-            exit(1)
-        }
-    case let .setup(autoApprove, dryRun, noOpen, noStart, waitAccessibilitySeconds):
+    case let .setup(noOpen, noStart, waitAccessibilitySeconds):
         runSetup(
-            autoApprove: autoApprove,
-            dryRun: dryRun,
             noOpen: noOpen,
             noStart: noStart,
             waitAccessibilitySeconds: waitAccessibilitySeconds
         )
-    case let .uninstall(autoApprove, dryRun):
-        runUninstall(autoApprove: autoApprove, dryRun: dryRun)
-    case let .status(dryRun):
-        printStatus(dryRun: dryRun)
-    case .doctor:
-        printDoctor()
-    case let .restart(dryRun):
+    case .uninstall:
+        runUninstall()
+    case .status:
+        printStatus()
+    case .restart:
         let plist = launchAgentPlistPath()
-        if !dryRun && !FileManager.default.fileExists(atPath: plist) {
-            writeStderr("error: LaunchAgent plist missing: \(plist). Run enka setup first.\n")
+        if !FileManager.default.fileExists(atPath: plist) {
+            writeStderr("error: LaunchAgent plist missing: \(plist). Run the installer again.\n")
             exit(1)
         }
-        runRestartCommands(plistPath: plist, dryRun: dryRun)
-    case let .stop(dryRun):
+        runRestartCommands(plistPath: plist)
+    case .stop:
         let plist = launchAgentPlistPath()
-        if !dryRun && !FileManager.default.fileExists(atPath: plist) {
-            writeStderr("error: LaunchAgent plist missing: \(plist). Run enka setup first.\n")
+        if !FileManager.default.fileExists(atPath: plist) {
+            writeStderr("error: LaunchAgent plist missing: \(plist). Run the installer again.\n")
             exit(1)
         }
-        runStopCommands(plistPath: plist, dryRun: dryRun)
+        runStopCommands(plistPath: plist)
     }
 } catch let error as EnkaError {
     if case .invalidArguments = error {

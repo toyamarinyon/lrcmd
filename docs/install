@@ -111,18 +111,18 @@ done_step "Installed $ENKA_INSTALL_ROOT"
 
 if [ "$ENKA_SKIP_SETUP" = "1" ]; then
   echo "✓ Setup skipped"
-  echo "Next: $ENKA_INSTALL_ROOT/bin/enka setup --yes"
+  echo "Next: $ENKA_INSTALL_ROOT/bin/enka install"
   exit 0
 fi
 
 if [ -n "$ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS" ]; then
-  if ! "$ENKA_INSTALL_ROOT/bin/enka" setup --yes --wait-accessibility "$ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS"; then
-    echo "error: setup failed. run \"$ENKA_INSTALL_ROOT/bin/enka setup --yes --wait-accessibility $ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS\" to retry" >&2
+  if ! "$ENKA_INSTALL_ROOT/bin/enka" install --wait-accessibility "$ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS"; then
+    echo "error: install failed. run \"$ENKA_INSTALL_ROOT/bin/enka install --wait-accessibility $ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS\" to retry" >&2
     exit 1
   fi
 else
-  if ! "$ENKA_INSTALL_ROOT/bin/enka" setup --yes; then
-    echo "error: setup failed. run \"$ENKA_INSTALL_ROOT/bin/enka setup --yes\" to retry" >&2
+  if ! "$ENKA_INSTALL_ROOT/bin/enka" install; then
+    echo "error: install failed. run \"$ENKA_INSTALL_ROOT/bin/enka install\" to retry" >&2
     exit 1
   fi
 fi

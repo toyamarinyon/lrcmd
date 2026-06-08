@@ -138,36 +138,40 @@ if [ ! -f "$ENKA_VERIFY_INSTALL_ROOT/Enka.app/Contents/Info.plist" ]; then
   exit 1
 fi
 
-echo "verify: dry-run execution"
-VERIFY_SETUP_DRY_RUN_LOG="$VERIFY_TMP_DIR/verify-setup-dry-run.log"
+echo "verify: isolated setup"
+VERIFY_SETUP_LOG="$VERIFY_TMP_DIR/verify-setup.log"
 if ! (
   ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT" \
   ENKA_LAUNCH_AGENT_DIR="$ENKA_VERIFY_INSTALL_ROOT/.verify-agents" \
-  "$ENKA_VERIFY_INSTALL_ROOT/bin/enka" setup --dry-run --yes --wait-accessibility 0
-) >"$VERIFY_SETUP_DRY_RUN_LOG" 2>&1; then
-  cat "$VERIFY_SETUP_DRY_RUN_LOG"
-  echo "error: setup dry-run command failed" >&2
+  ENKA_STATE_DIR="$ENKA_VERIFY_INSTALL_ROOT/.verify-state" \
+  "$ENKA_VERIFY_INSTALL_ROOT/bin/enka" install --no-open --no-start --wait-accessibility 0
+) >"$VERIFY_SETUP_LOG" 2>&1; then
+  cat "$VERIFY_SETUP_LOG"
+  echo "error: isolated setup command failed" >&2
   exit 1
 fi
 
-if [ -e "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents/dev.ultrahope.enka.plist" ]; then
-  cat "$VERIFY_SETUP_DRY_RUN_LOG"
-  echo "error: setup dry-run modified files unexpectedly" >&2
+if [ ! -f "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents/dev.ultrahope.enka.plist" ]; then
+  cat "$VERIFY_SETUP_LOG"
+  echo "error: isolated setup did not write LaunchAgent plist" >&2
   exit 1
 fi
-if [ -d "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents" ]; then
-  cat "$VERIFY_SETUP_DRY_RUN_LOG"
-  echo "error: setup dry-run created launch agent directories unexpectedly" >&2
+if [ ! -f "$ENKA_VERIFY_INSTALL_ROOT/.verify-state/setup.log" ]; then
+  cat "$VERIFY_SETUP_LOG"
+  echo "error: isolated setup did not write setup log" >&2
   exit 1
 fi
-if ! grep -Fq "No files will be written, no apps opened, no launchctl commands run." "$VERIFY_SETUP_DRY_RUN_LOG"; then
-  cat "$VERIFY_SETUP_DRY_RUN_LOG"
-  echo "error: setup dry-run did not report safe no-op behavior" >&2
+if grep -Fq "Registering LaunchAgent" "$VERIFY_SETUP_LOG"; then
+  cat "$VERIFY_SETUP_LOG"
+  echo "error: isolated setup attempted to register LaunchAgent" >&2
   exit 1
 fi
-rm -f "$VERIFY_SETUP_DRY_RUN_LOG"
+rm -f "$VERIFY_SETUP_LOG"
 
-ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT" "$ENKA_VERIFY_INSTALL_ROOT/bin/enka" status --dry-run >/dev/null
+ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT" \
+ENKA_LAUNCH_AGENT_DIR="$ENKA_VERIFY_INSTALL_ROOT/.verify-agents" \
+ENKA_STATE_DIR="$ENKA_VERIFY_INSTALL_ROOT/.verify-state" \
+"$ENKA_VERIFY_INSTALL_ROOT/bin/enka" status >/dev/null
 
 cat <<EOF
 verification passed:
@@ -175,5 +179,6 @@ verification passed:
 - hosted installer path: docs/install
 - installed binary: $ENKA_VERIFY_INSTALL_ROOT/bin/enka
 - installed app: $ENKA_VERIFY_INSTALL_ROOT/Enka.app
-- CLI status check: enka status --dry-run
+- isolated setup: install --no-open --no-start --wait-accessibility 0
+- CLI status check: enka status
 EOF

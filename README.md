@@ -12,23 +12,29 @@ Hosted installer (recommended):
 curl -fsSL https://enka.ultrahope.dev/install | sh
 ```
 
-This downloads the release archive and runs setup automatically:
+This downloads the release archive and configures Enka automatically:
 - downloads the hosted release and checksum
 - installs to `~/Applications/enka` by default
 - installs `bin/enka` and `Enka.app`
-- runs setup, which opens `Enka.app` and waits for Accessibility permission
+- opens `Enka.app` and waits for Accessibility permission
 - writes the LaunchAgent plist
 - starts/restarts the LaunchAgent after permission is granted
-- if permission is not granted before timeout, setup exits with retry guidance
+- if permission is not granted before timeout, the installer exits with retry guidance
 
-Setup details in one line:
+If installation fails while waiting for Accessibility permission, rerun the installer:
 
 ```bash
-~/Applications/enka/bin/enka setup --yes
+curl -fsSL https://enka.ultrahope.dev/install | sh
+```
+
+If the files are already installed, you can rerun macOS registration directly:
+
+```bash
+~/Applications/enka/bin/enka install
 ```
 
 Accessibility permission cannot be granted automatically by the installer.
-`setup` opens `Enka.app` and waits for you to enable it in System Settings; if permission is not granted before timeout, it exits with retry guidance.
+The installer opens `Enka.app` and waits for you to enable it in System Settings; if permission is not granted before timeout, it exits with retry guidance.
 
 Environment overrides:
 
@@ -45,33 +51,17 @@ sh -c "$(curl -fsSL https://enka.ultrahope.dev/install)"
 
 Notes:
 
-- `ENKA_SKIP_SETUP=1` skips the automatic `setup` step.
+- `ENKA_SKIP_SETUP=1` skips automatic configuration after copying files.
 - `ENKA_SETUP_WAIT_ACCESSIBILITY_SECONDS` enables a custom timeout for the permission wait.
 - `ENKA_INSTALL_ORIGIN` sets the product install site used to resolve `latest.json`.
 - `ENKA_RELEASE_BASE_URL` sets the release download base; by default, artifacts are downloaded from GitHub Releases.
 - `ENKA_BASE_URL` sets a fully-resolved base path and bypasses the default release download convention.
 
-## Setup
-
-`enka setup` installs or refreshes the LaunchAgent and supporting files for the app bundle:
-
-- writes/updates the LaunchAgent plist
-- opens `Enka.app` unless `--no-open` is passed
-- waits for Accessibility permission (default 120 seconds)
-- starts/restarts the LaunchAgent unless `--no-start` is passed
-
-Flags:
-
-- `--yes`: use recommended defaults without prompts
-- `--dry-run`: show planned plist paths, app open, permission wait, and restart without writing files, opening apps, or running `launchctl`
-- `--no-open`: skip opening `Enka.app`
-- `--no-start`: skip `launchctl` calls
-- `--wait-accessibility <seconds>`: customize permission wait timeout
-
 Development path overrides:
 
-- `ENKA_INSTALL_ROOT`: install root used by status/setup/plist generation
+- `ENKA_INSTALL_ROOT`: install root used by installation, status, and plist generation
 - `ENKA_LAUNCH_AGENT_DIR`: LaunchAgent directory (default: `~/Library/LaunchAgents`)
+- `ENKA_STATE_DIR`: state/log directory (default: `~/.local/state/enka`)
 
 ## CLI
 
@@ -82,25 +72,16 @@ swift build
 swift build -c release
 ```
 
-Input source commands:
-
-```bash
-.build/debug/enka sources
-.build/debug/enka current
-.build/debug/enka select com.apple.keylayout.ABC
-```
-
 Daemon and lifecycle commands:
 
 ```bash
 .build/debug/enka
 .build/debug/enka run
-.build/debug/enka setup --dry-run --yes
-.build/debug/enka status --dry-run
-.build/debug/enka doctor
-.build/debug/enka restart --dry-run
-.build/debug/enka stop --dry-run
-.build/debug/enka uninstall --dry-run
+.build/debug/enka install
+.build/debug/enka status
+.build/debug/enka restart
+.build/debug/enka stop
+.build/debug/enka uninstall
 ```
 
 Default paths:
@@ -116,7 +97,7 @@ Behavior:
 - pressing another key while Command is held cancels the action
 - pressing both Command keys together cancels both actions
 
-Accessibility permission is required before the daemon can observe Command key events. If automatic setup does not show the app in System Settings, open it manually:
+Accessibility permission is required before the daemon can observe Command key events. If `enka install` does not show the app in System Settings, open it manually:
 
 ```bash
 open ~/Applications/enka/Enka.app
@@ -136,8 +117,7 @@ Recommended:
 enka uninstall
 ```
 
-With `--yes`, `enka` stops the LaunchAgent and removes the LaunchAgent plist and installed files without prompting.
-With `--dry-run`, `enka` reports what would be removed without deleting files or running `launchctl`.
+`enka uninstall` asks before stopping the LaunchAgent and removing the LaunchAgent plist and installed files.
 
 macOS manages Accessibility permission separately. After uninstalling, open Accessibility settings, select `Enka`, then click the minus button below the app list:
 
