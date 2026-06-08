@@ -171,8 +171,16 @@ func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data(message.utf8))
 }
 
+private let isTTY = isatty(STDOUT_FILENO) == 1
+
+nonisolated(unsafe) private let setupDateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
 func printStep(_ message: String) {
-    if isatty(STDOUT_FILENO) == 1 {
+    if isTTY {
         print("→ \(message)", terminator: "")
         fflush(stdout)
     } else {
@@ -181,7 +189,7 @@ func printStep(_ message: String) {
 }
 
 func printDone(_ message: String) {
-    if isatty(STDOUT_FILENO) == 1 {
+    if isTTY {
         print("\r\u{001B}[K✓ \(message)")
     } else {
         print("✓ \(message)")
@@ -190,7 +198,7 @@ func printDone(_ message: String) {
 
 func printAccessibilityWait() {
     print("→ Waiting for Accessibility permission")
-    if isatty(STDOUT_FILENO) == 1 {
+    if isTTY {
         print("  Enka needs Accessibility to observe Command key taps.", terminator: "")
         fflush(stdout)
     } else {
@@ -199,7 +207,7 @@ func printAccessibilityWait() {
 }
 
 func printAccessibilityDone(replacingWait: Bool) {
-    if isatty(STDOUT_FILENO) == 1 && replacingWait {
+    if isTTY && replacingWait {
         print("\r\u{001B}[K\u{001B}[1A\r\u{001B}[K✓ Accessibility permission granted")
     } else {
         printDone("Accessibility permission granted")
@@ -207,7 +215,7 @@ func printAccessibilityDone(replacingWait: Bool) {
 }
 
 func finishAccessibilityWaitBeforeMessage(_ replacingWait: Bool) {
-    if isatty(STDOUT_FILENO) == 1 && replacingWait {
+    if isTTY && replacingWait {
         print("")
     }
 }
@@ -268,9 +276,7 @@ func setupLogPath() -> String {
 }
 
 func setupLogPrefix() -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: Date())
+    setupDateFormatter.string(from: Date())
 }
 
 func writeSetupLog(_ path: String, _ message: String) {
@@ -353,10 +359,6 @@ struct InputSource {
     let source: TISInputSource
     let id: String
     let name: String
-}
-
-func quotedPath(_ path: String) -> String {
-    return "\"\(path)\""
 }
 
 func inputSourceProperty(_ source: TISInputSource, key: CFString) -> String? {
@@ -577,10 +579,8 @@ func waitForAccessibilityPermissionViaAppExecutable(
         return false
     }
 
-    if target > 0 {
-        printAccessibilityWait()
-        waitWasDisplayed = true
-    }
+    printAccessibilityWait()
+    waitWasDisplayed = true
 
     for attempt in 1...target {
         sleep(1)
@@ -1158,7 +1158,7 @@ func runRestartCommands(plistPath: String, dryRun: Bool, logToSetup: ((String) -
     let uid = getuid()
     let bootoutArgs = ["bootout", "gui/\(uid)", plistPath]
     let bootstrapArgs = ["bootstrap", "gui/\(uid)", plistPath]
-    let kickstartArgs = ["kickstart", "-k", "gui/\(uid)/dev.ultrahope.enka"]
+    let kickstartArgs = ["kickstart", "-k", launchctlServiceTarget()]
 
     if dryRun {
         print("UID: \(uid)")
@@ -1259,11 +1259,7 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
         return
     }
 
-    let removePlist = true
-    let removeBinaries = true
-    let shouldRemoveAnyFiles = removePlist || removeBinaries
-
-    if hasPlist && shouldRemoveAnyFiles && !dryRun {
+    if hasPlist && !dryRun {
         printStep("Stopping LaunchAgent")
         let status = runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout", quiet: true)
         if status == 0 {
@@ -1273,50 +1269,46 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
         }
     }
 
-    if removePlist {
-        if fm.fileExists(atPath: plistPath) {
+    if fm.fileExists(atPath: plistPath) {
+        do {
+            if dryRun {
+                plistResult = "Would remove"
+            } else {
+                printStep("Removing LaunchAgent plist")
+                try fm.removeItem(atPath: plistPath)
+                printDone("Removed LaunchAgent plist")
+                plistResult = "Removed"
+            }
+        } catch {
+            writeStderr("error: failed to remove plist at \(plistPath): \(error.localizedDescription)\n")
+            exit(1)
+        }
+    } else {
+        plistResult = "Missing"
+    }
+
+    if fm.fileExists(atPath: installRoot) {
+        if isSafeInstallRootPath(installRoot) {
             do {
                 if dryRun {
-                    plistResult = "Would remove"
+                    binariesResult = "Would remove"
                 } else {
-                    printStep("Removing LaunchAgent plist")
-                    try fm.removeItem(atPath: plistPath)
-                    printDone("Removed LaunchAgent plist")
-                    plistResult = "Removed"
+                    printStep("Removing installed files")
+                    try fm.removeItem(atPath: installRoot)
+                    printDone("Removed installed files")
+                    binariesResult = "Removed"
                 }
             } catch {
-                writeStderr("error: failed to remove plist at \(plistPath): \(error.localizedDescription)\n")
+                writeStderr("error: failed to remove installed binaries at \(installRoot): \(error.localizedDescription)\n")
                 exit(1)
             }
         } else {
-            plistResult = "Missing"
+            binariesResult = "Kept"
+            print("Install root was kept because the path is too broad or unsafe:")
+            print("  \(installRoot)")
         }
-    }
-
-    if removeBinaries {
-        if fm.fileExists(atPath: installRoot) {
-            if isSafeInstallRootPath(installRoot) {
-                do {
-                    if dryRun {
-                        binariesResult = "Would remove"
-                    } else {
-                        printStep("Removing installed files")
-                        try fm.removeItem(atPath: installRoot)
-                        printDone("Removed installed files")
-                        binariesResult = "Removed"
-                    }
-                } catch {
-                    writeStderr("error: failed to remove installed binaries at \(installRoot): \(error.localizedDescription)\n")
-                    exit(1)
-                }
-            } else {
-                binariesResult = "Kept"
-                print("Install root was kept because the path is too broad or unsafe:")
-                print("  \(installRoot)")
-            }
-        } else {
-            binariesResult = "Missing"
-        }
+    } else {
+        binariesResult = "Missing"
     }
 
     if dryRun {
