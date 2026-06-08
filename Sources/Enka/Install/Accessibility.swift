@@ -44,11 +44,10 @@ func runAccessibilityStatusSubcommand(
                 return false
             default:
                 if process.terminationStatus == 0 {
-                    logToSetup?("\(logPrefix) [setup] accessibility-status parsed unknown result from result file")
+                    logToSetup?("\(logPrefix) [setup] accessibility-status parsed unknown result from result file; falling back to executable check")
                 } else {
-                    logToSetup?("\(logPrefix) [setup] accessibility-status failed: status=\(process.terminationStatus), reason=result_file_invalid")
+                    logToSetup?("\(logPrefix) [setup] accessibility-status failed: status=\(process.terminationStatus), reason=result_file_invalid; falling back to executable check")
                 }
-                return nil
             }
         } catch {
             logToSetup?("\(logPrefix) [setup] accessibility-status command failed: \(error.localizedDescription)")

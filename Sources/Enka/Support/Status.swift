@@ -4,7 +4,6 @@ func printStatus() {
     let fm = FileManager.default
     let plistPath = launchAgentPlistPath()
     let target = launchctlServiceTarget()
-    let accessible = checkAccessibilityPermission()
     let appPath = installedAppPath()
     let appExecutablePath = installedAppExecutablePath()
     let outputLogPath = standardOutputLogPath()
@@ -17,9 +16,30 @@ func printStatus() {
     print("Binary:       \(installedBinaryPath()) (\(fm.fileExists(atPath: installedBinaryPath()) ? "exists" : "missing"))")
     print("Logs:         stdout=\(outputLogPath) (\(fm.fileExists(atPath: outputLogPath) ? "exists" : "missing")), stderr=\(errorLogPath) (\(fm.fileExists(atPath: errorLogPath) ? "exists" : "missing"))")
     print("State dir:    \(stateDir) (\(fm.fileExists(atPath: stateDir) ? "exists" : "missing"))")
-    print("Accessibility:\(accessible ? " granted" : " missing")")
-    if !accessible {
-        print("next action: open \(installedAppPath())")
+
+    let accessibilityStatus = runAccessibilityStatusSubcommand(
+        executablePath: appExecutablePath,
+        appBundlePath: appPath,
+        logToSetup: nil
+    )
+
+    switch accessibilityStatus {
+    case .some(true):
+        print("Accessibility: granted")
+    case .some(false):
+        print("Accessibility: missing")
+        print("next action: open \(appPath)")
+    case .none:
+        if !fm.fileExists(atPath: appPath) {
+            print("Accessibility: unavailable (app missing)")
+            print("next action: run enka install")
+        } else if !fm.fileExists(atPath: appExecutablePath) {
+            print("Accessibility: unavailable (app executable missing)")
+            print("next action: run enka install")
+        } else {
+            print("Accessibility: unavailable (could not verify)")
+            print("next action: open \(appPath) and enable Accessibility")
+        }
     }
     print("Check commands:")
     print("  launchctl print \(target)")
